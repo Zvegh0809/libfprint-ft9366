@@ -14,9 +14,9 @@ arch=(x86_64)
 url="https://github.com/Zvegh0809/libfprint-ft9366"
 license=(LGPL-2.1-or-later)
 depends=(glib2 libgudev libgusb openssl pixman)
-makedepends=(git meson gobject-introspection)
+makedepends=(git glib2-devel gobject-introspection meson python systemd)
 provides=("libfprint=$pkgver" libfprint-2.so)
-conflicts=(libfprint)
+conflicts=(libfprint libfprint-ft9366-git)
 source=("libfprint::git+file://$HOME/libfprint#branch=ft9366")
 sha256sums=('SKIP')
 
