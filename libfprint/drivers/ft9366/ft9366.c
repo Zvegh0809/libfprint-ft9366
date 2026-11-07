@@ -60,13 +60,16 @@
 #define BG_TOL            60
 /* observed empty-sensor background mean: 2370-2570 */
 #define BG_SANE_MIN       2300
-/* A finger resting on the sensor through the whole calibration is detected
- * by the background mean: a drop of more than BG_FINGER_DROP against the
- * last accepted calibration (or BG_SANE_MIN on the first one). Calibration
- * is then retried; after BG_RETRIES the new level is accepted anyway, so a
- * genuine baseline shift (e.g. temperature) only costs one slow start. */
+/* A finger resting on the sensor during calibration is detected by the
+ * background mean: a drop of more than BG_FINGER_DROP against the last
+ * accepted calibration (or BG_SANE_MIN on the first one). While a finger
+ * rests on it, the sensor returns all-zero frames after the first one, so
+ * frames below BG_VALID_MIN are never valid. Calibration is retried up to
+ * BG_RETRIES times; then a valid but lower level is accepted (a genuine
+ * baseline shift, e.g. temperature), while no valid frame fails activation. */
 #define BG_FINGER_DROP    150
-#define BG_RETRIES        10
+#define BG_VALID_MIN      1000
+#define BG_RETRIES        20
 #define BG_RETRY_MS       300
 #define BG_BYTES          ((gsize) BG_FRAMES * RAW_W * RAW_H * sizeof (guint16))
 
@@ -338,6 +341,8 @@ bg_finger_suspected (FpiDeviceFt9366 *self)
 {
   guint32 m = bg_max_mean (self);
 
+  if (m < BG_VALID_MIN)
+    return TRUE;
   if (self->bg_ref_mean)
     return m + BG_FINGER_DROP < self->bg_ref_mean;
   return m < BG_SANE_MIN;
@@ -704,6 +709,13 @@ act_run_state (FpiSsm *ssm, FpDevice *dev)
                    bg_max_mean (self), self->bg_retries, BG_RETRIES);
           bg_reset (self);
           fpi_ssm_jump_to_state_delayed (ssm, ACT_PREP, BG_RETRY_MS);
+        }
+      else if (bg_max_mean (self) < BG_VALID_MIN)
+        {
+          bg_reset (self);
+          fpi_ssm_mark_failed (ssm,
+                               fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
+                                                         "Finger on the sensor during calibration; lift it and try again"));
         }
       else
         {
