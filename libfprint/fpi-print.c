@@ -42,10 +42,42 @@
  * Appends the single #FPI_PRINT_NBIS print from @add to the collection of
  * prints in @print. Both print objects need to be of type #FPI_PRINT_NBIS
  * for this to work.
+ *
+ * For #FPI_PRINT_RAW prints (image devices with their own matcher), the data
+ * of @add is appended to the "av" array held by @print.
  */
 void
 fpi_print_add_print (FpPrint *print, FpPrint *add)
 {
+  if (print->type == FPI_PRINT_RAW && add->type == FPI_PRINT_RAW)
+    {
+      GVariantBuilder builder;
+
+      g_return_if_fail (add->data != NULL);
+      g_return_if_fail (print->data == NULL ||
+                        g_variant_is_of_type (print->data, G_VARIANT_TYPE ("av")));
+
+      g_variant_builder_init (&builder, G_VARIANT_TYPE ("av"));
+      if (print->data)
+        {
+          GVariantIter iter;
+          GVariant *child;
+
+          g_variant_iter_init (&iter, print->data);
+          while ((child = g_variant_iter_next_value (&iter)))
+            {
+              g_variant_builder_add_value (&builder, child);
+              g_variant_unref (child);
+            }
+        }
+      g_variant_builder_add (&builder, "v", add->data);
+
+      g_clear_pointer (&print->data, g_variant_unref);
+      print->data = g_variant_ref_sink (g_variant_builder_end (&builder));
+      g_object_notify (G_OBJECT (print), "fpi-data");
+      return;
+    }
+
   g_return_if_fail (print->type == FPI_PRINT_NBIS);
   g_return_if_fail (add->type == FPI_PRINT_NBIS);
 

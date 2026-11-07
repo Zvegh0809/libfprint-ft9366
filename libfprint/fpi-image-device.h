@@ -20,6 +20,7 @@
 #pragma once
 
 #include "fpi-device.h"
+#include "fpi-print.h"
 #include "fp-image-device.h"
 
 /**
@@ -84,6 +85,17 @@ typedef enum {
  * @change_state: Notification about the current device state (i.e. waiting for
  *   finger or image capture). Implementing this is optional, it can e.g. be
  *   used to flash an LED when waiting for a finger.
+ * @extract_template: Optional host-side matcher, step 1. If set, NBIS minutiae
+ *   detection and bozorth3 are not used for this device. Called from a worker
+ *   thread for every captured image; it must not touch device state. Return a
+ *   (possibly floating) #GVariant describing the image, or %NULL and set
+ *   @error (use an #FP_DEVICE_RETRY error to ask the user to try again).
+ *   Prints created this way are of type #FPI_PRINT_RAW; an enrolled print
+ *   holds the per-stage variants as an "av" array.
+ * @match_template: Optional host-side matcher, step 2 (required if
+ *   @extract_template is set). Compare a probe variant (as returned by
+ *   @extract_template) against an enrolled "av" variant. Called from the
+ *   main thread.
  *
  * These are the main entry points for drivers to implement. Drivers may not
  * implement all of these entry points if they do not support the operation
@@ -114,6 +126,14 @@ struct _FpImageDeviceClass
   void          (*change_state) (FpImageDevice      *dev,
                                  FpiImageDeviceState state);
   void          (*deactivate)   (FpImageDevice *dev);
+
+  GVariant     *(*extract_template) (FpImageDevice *dev,
+                                     FpImage       *image,
+                                     GError       **error);
+  FpiMatchResult (*match_template)  (FpImageDevice *dev,
+                                     GVariant      *enrolled,
+                                     GVariant      *probe,
+                                     GError       **error);
 };
 
 void fpi_image_device_set_bz3_threshold (FpImageDevice *self,

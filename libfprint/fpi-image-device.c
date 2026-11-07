@@ -238,6 +238,113 @@ fp_image_device_maybe_complete_action (FpImageDevice *self, GError *error)
     }
 }
 
+static FpiMatchResult
+fpi_image_device_match (FpImageDevice *self,
+                        FpPrint       *template,
+                        FpPrint       *print,
+                        GError       **error)
+{
+  FpImageDevicePrivate *priv = fp_image_device_get_instance_private (self);
+  FpImageDeviceClass *cls = FP_IMAGE_DEVICE_GET_CLASS (self);
+  g_autoptr(GVariant) enrolled = NULL;
+  g_autoptr(GVariant) probe = NULL;
+  FpiPrintType ttype, ptype;
+
+  if (!cls->match_template)
+    return fpi_print_bz3_match (template, print, priv->bz3_threshold, error);
+
+  g_object_get (template, "fpi-type", &ttype, "fpi-data", &enrolled, NULL);
+  g_object_get (print, "fpi-type", &ptype, "fpi-data", &probe, NULL);
+
+  /* e.g. a print enrolled before the driver switched matchers */
+  if (ttype != FPI_PRINT_RAW || ptype != FPI_PRINT_RAW || !enrolled || !probe ||
+      !g_variant_is_of_type (enrolled, G_VARIANT_TYPE ("av")))
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+                   "Print is not in this driver's template format");
+      return FPI_MATCH_ERROR;
+    }
+
+  return cls->match_template (self, enrolled, probe, error);
+}
+
+/* Common tail of an image capture: enrolment progress or identification.
+ * Takes ownership of @print and @error. */
+static void
+fpi_image_device_report_print (FpImageDevice *self, FpPrint *print_in, GError *error)
+{
+  g_autoptr(FpPrint) print = print_in;
+  FpDevice *device = FP_DEVICE (self);
+  FpImageDevicePrivate *priv = fp_image_device_get_instance_private (self);
+  FpiDeviceAction action = fpi_device_get_current_action (device);
+
+  if (action == FPI_DEVICE_ACTION_ENROLL)
+    {
+      FpPrint *enroll_print;
+      fpi_device_get_enroll_data (device, &enroll_print);
+
+      if (print)
+        {
+          fpi_print_add_print (enroll_print, print);
+          priv->enroll_stage += 1;
+        }
+
+      fpi_device_enroll_progress (device, priv->enroll_stage,
+                                  g_steal_pointer (&print), error);
+      error = NULL;
+
+      /* Start another scan or deactivate. */
+      if (priv->enroll_stage == fp_device_get_nr_enroll_stages (device))
+        {
+          fp_image_device_maybe_complete_action (self, NULL);
+          fpi_image_device_deactivate (self, FALSE);
+        }
+      else
+        {
+          fp_image_device_enroll_maybe_await_finger_on (FP_IMAGE_DEVICE (device));
+        }
+    }
+  else if (action == FPI_DEVICE_ACTION_IDENTIFY)
+    {
+      gint i;
+      GPtrArray *templates;
+      FpPrint *result = NULL;
+
+      fpi_device_get_identify_data (device, &templates);
+      for (i = 0; !error && i < templates->len; i++)
+        {
+          FpPrint *template = g_ptr_array_index (templates, i);
+
+          if (fpi_image_device_match (self, template, print, &error) == FPI_MATCH_SUCCESS)
+            {
+              result = template;
+              break;
+            }
+        }
+
+      /* fpi_device_identify_report() expects a non-NBIS scanned print to be
+       * equal to the matched one (device-stored prints). A host-matched RAW
+       * probe never is, so do not hand it over on a match. */
+      if (result && FP_IMAGE_DEVICE_GET_CLASS (self)->match_template)
+        g_clear_object (&print);
+
+      if (!error || error->domain == FP_DEVICE_RETRY)
+        fpi_device_identify_report (device, result, g_steal_pointer (&print), g_steal_pointer (&error));
+
+      fp_image_device_maybe_complete_action (self, g_steal_pointer (&error));
+    }
+  else
+    {
+      /* XXX: This can be hit currently due to a race condition in the enroll code!
+       *      In that case we scan a further image even though the minutiae for the previous
+       *      one have not yet been detected.
+       *      We need to keep track on the pending minutiae detection and the fact that
+       *      it will finish eventually (or we may need to retry on error and activate the
+       *      device again). */
+      g_assert_not_reached ();
+    }
+}
+
 static void
 fpi_image_device_minutiae_detected (GObject *source_object, GAsyncResult *res, gpointer user_data)
 {
@@ -297,64 +404,93 @@ fpi_image_device_minutiae_detected (GObject *source_object, GAsyncResult *res, g
         }
     }
 
-  if (action == FPI_DEVICE_ACTION_ENROLL)
+  fpi_image_device_report_print (self, g_steal_pointer (&print), g_steal_pointer (&error));
+}
+
+/* Host-side matcher path (FpImageDeviceClass::extract_template) */
+
+static void
+fpi_image_device_extract_thread (GTask        *task,
+                                 gpointer      source_object,
+                                 gpointer      task_data,
+                                 GCancellable *cancellable)
+{
+  FpImageDevice *self = FP_IMAGE_DEVICE (task_data);
+  FpImage *image = FP_IMAGE (source_object);
+  GError *error = NULL;
+  GVariant *tmpl;
+
+  if (g_task_return_error_if_cancelled (task))
+    return;
+
+  tmpl = FP_IMAGE_DEVICE_GET_CLASS (self)->extract_template (self, image, &error);
+  if (!tmpl)
     {
-      FpPrint *enroll_print;
-      fpi_device_get_enroll_data (device, &enroll_print);
+      if (!error)
+        error = fpi_device_retry_new (FP_DEVICE_RETRY_GENERAL);
+      g_task_return_error (task, error);
+      return;
+    }
 
-      if (print)
-        {
-          fpi_print_add_print (enroll_print, print);
-          priv->enroll_stage += 1;
-        }
+  g_task_return_pointer (task, g_variant_ref_sink (tmpl), (GDestroyNotify) g_variant_unref);
+}
 
-      fpi_device_enroll_progress (device, priv->enroll_stage,
-                                  g_steal_pointer (&print), error);
+static void
+fpi_image_device_template_extracted (GObject *source_object, GAsyncResult *res, gpointer user_data)
+{
+  g_autoptr(FpImage) image = FP_IMAGE (source_object);
+  g_autoptr(FpPrint) print = NULL;
+  g_autoptr(GVariant) tmpl = NULL;
+  FpImageDevice *self = FP_IMAGE_DEVICE (user_data);
+  FpDevice *device = FP_DEVICE (self);
+  FpImageDevicePrivate *priv;
+  GError *error = NULL;
 
-      /* Start another scan or deactivate. */
-      if (priv->enroll_stage == fp_device_get_nr_enroll_stages (device))
+  priv = fp_image_device_get_instance_private (self);
+  priv->minutiae_scan_active = FALSE;
+
+  tmpl = g_task_propagate_pointer (G_TASK (res), &error);
+
+  if (fpi_device_get_current_action (device) == FPI_DEVICE_ACTION_CAPTURE)
+    {
+      /* A plain capture only needs the image. */
+      if (error && g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
         {
           fp_image_device_maybe_complete_action (self, g_steal_pointer (&error));
-          fpi_image_device_deactivate (self, FALSE);
+          fpi_image_device_deactivate (self, TRUE);
+          return;
         }
-      else
-        {
-          fp_image_device_enroll_maybe_await_finger_on (FP_IMAGE_DEVICE (device));
-        }
+      g_clear_error (&error);
+      priv->capture_image = g_steal_pointer (&image);
+      fp_image_device_maybe_complete_action (self, NULL);
+      return;
     }
-  else if (action == FPI_DEVICE_ACTION_IDENTIFY)
+
+  if (!tmpl)
     {
-      gint i;
-      GPtrArray *templates;
-      FpPrint *result = NULL;
-
-      fpi_device_get_identify_data (device, &templates);
-      for (i = 0; !error && i < templates->len; i++)
+      if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
         {
-          FpPrint *template = g_ptr_array_index (templates, i);
-
-          if (fpi_print_bz3_match (template, print, priv->bz3_threshold, &error) == FPI_MATCH_SUCCESS)
-            {
-              result = template;
-              break;
-            }
+          fp_image_device_maybe_complete_action (self, g_steal_pointer (&error));
+          fpi_image_device_deactivate (self, TRUE);
+          return;
         }
 
-      if (!error || error->domain == FP_DEVICE_RETRY)
-        fpi_device_identify_report (device, result, g_steal_pointer (&print), g_steal_pointer (&error));
-
-      fp_image_device_maybe_complete_action (self, g_steal_pointer (&error));
+      if (error->domain != FP_DEVICE_RETRY)
+        {
+          g_warning ("Failed to extract template: %s", error->message);
+          g_clear_error (&error);
+          error = fpi_device_retry_new_msg (FP_DEVICE_RETRY_GENERAL,
+                                            "Template extraction failed, please retry");
+        }
     }
   else
     {
-      /* XXX: This can be hit currently due to a race condition in the enroll code!
-       *      In that case we scan a further image even though the minutiae for the previous
-       *      one have not yet been detected.
-       *      We need to keep track on the pending minutiae detection and the fact that
-       *      it will finish eventually (or we may need to retry on error and activate the
-       *      device again). */
-      g_assert_not_reached ();
+      print = fp_print_new (device);
+      fpi_print_set_type (print, FPI_PRINT_RAW);
+      g_object_set (print, "fpi-data", tmpl, NULL);
     }
+
+  fpi_image_device_report_print (self, g_steal_pointer (&print), error);
 }
 
 /*********************************************************/
@@ -483,12 +619,29 @@ fpi_image_device_image_captured (FpImageDevice *self, FpImage *image)
 
   priv->minutiae_scan_active = TRUE;
 
-  /* XXX: We also detect minutiae in capture mode, we solely do this
-   *      to normalize the image which will happen as a by-product. */
-  fp_image_detect_minutiae (image,
-                            fpi_device_get_cancellable (FP_DEVICE (self)),
-                            fpi_image_device_minutiae_detected,
-                            self);
+  if (FP_IMAGE_DEVICE_GET_CLASS (self)->extract_template)
+    {
+      /* Driver-provided matcher: no minutiae, extract its template in a
+       * worker thread. The callback takes over the reference to @image. */
+      GTask *task = g_task_new (image,
+                                fpi_device_get_cancellable (FP_DEVICE (self)),
+                                fpi_image_device_template_extracted,
+                                self);
+
+      g_task_set_source_tag (task, fpi_image_device_image_captured);
+      g_task_set_task_data (task, g_object_ref (self), g_object_unref);
+      g_task_run_in_thread (task, fpi_image_device_extract_thread);
+      g_object_unref (task);
+    }
+  else
+    {
+      /* XXX: We also detect minutiae in capture mode, we solely do this
+       *      to normalize the image which will happen as a by-product. */
+      fp_image_detect_minutiae (image,
+                                fpi_device_get_cancellable (FP_DEVICE (self)),
+                                fpi_image_device_minutiae_detected,
+                                self);
+    }
 
   /* XXX: This is wrong if we add support for raw capture mode. */
   fp_image_device_change_state (self, FPI_IMAGE_DEVICE_STATE_AWAIT_FINGER_OFF);
