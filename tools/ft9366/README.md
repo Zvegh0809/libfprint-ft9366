@@ -45,16 +45,22 @@ have been measured.
 ### Arch Linux and derivatives
 
 ```sh
-git clone -b ft9366 https://github.com/Zvegh0809/libfprint-ft9366 ~/libfprint
-cd ~/libfprint/tools/ft9366
-makepkg -si                       # installs libfprint-ft9366 in place of libfprint
+git clone -b ft9366 --depth 1 https://github.com/Zvegh0809/libfprint-ft9366 ~/libfprint-ft9366
+cd ~/libfprint-ft9366/tools/ft9366/aur
+makepkg -si
 ```
 
-The package is called `libfprint-ft9366`; it provides and conflicts with
-`libfprint`, so pacman asks to remove the official package once, and fprintd
-keeps working. `pacman -Syu` will not swap it back. To get new driver
-changes, pull this branch and rebuild; to go back, run
-`sudo pacman -S libfprint`.
+This builds the `libfprint-ft9366-git` package from this repository. It
+provides and conflicts with `libfprint`, so pacman asks to remove the official
+package once, and fprintd keeps working; `pacman -Syu` will not swap it back.
+It also installs the `ft9366-setup-key` command. To update, run `git pull` in
+the clone and `makepkg -si` again; to go back, run `sudo pacman -S libfprint`.
+
+The same PKGBUILD will be published in the AUR as `libfprint-ft9366-git` once
+AUR account registration reopens.
+
+For driver development, `tools/ft9366/PKGBUILD` builds `libfprint-ft9366` from
+the committed state of a local clone at `~/libfprint` instead.
 
 ### Other distributions
 
@@ -73,10 +79,13 @@ sudo ninja -C build install
 ### Key setup and enrollment
 
 ```sh
-sudo sh ~/libfprint/tools/ft9366/ft9366-setup-key.sh   # needs a TPM2; see the script header
+sudo ft9366-setup-key        # Arch package; elsewhere: sudo sh ~/libfprint/tools/ft9366/ft9366-setup-key.sh
 fprintd-enroll
 fprintd-verify
 ```
+
+The key needs a TPM2 (see the script header). The device stays closed until
+the key exists.
 
 The driver asks for 16 touches per finger. Move the finger slightly between
 touches so different areas get covered.
