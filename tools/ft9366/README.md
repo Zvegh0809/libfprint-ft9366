@@ -92,6 +92,9 @@ touches so different areas get covered.
 - Use it for convenience (`sudo`, screen unlock), **not as the only factor**
   for disk encryption or other high-value secrets.
 
+Please report security problems privately, as described in
+[SECURITY.md](../../.github/SECURITY.md), not in a public issue.
+
 ## Known issues
 
 - If a finger rests on the sensor when it activates, calibration waits up to

@@ -1,0 +1,87 @@
+name: FT9366 driver problem
+description: Enrollment or verification does not work with the FT9366 (2808:a658) driver
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! This form is only for the **FT9366 driver in this fork**.
+        Problems with other fingerprint readers belong to
+        [upstream libfprint](https://gitlab.freedesktop.org/libfprint/libfprint/-/issues).
+
+        **Never attach fingerprint images, `.pgm` files, USB captures or anything from
+        `/var/lib/fprint`.** Security problems go to a
+        [private report](https://github.com/Zvegh0809/libfprint-ft9366/security/advisories/new), not here.
+
+  - type: input
+    id: laptop
+    attributes:
+      label: Laptop model
+      placeholder: ASUS Vivobook Pro 15 (M6500QE)
+    validations:
+      required: true
+
+  - type: textarea
+    id: lsusb
+    attributes:
+      label: Output of `lsusb | grep 2808`
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: package
+    attributes:
+      label: Distribution and package version
+      description: e.g. the output of `pacman -Q libfprint-ft9366-git`, or the commit you built
+      placeholder: CachyOS, libfprint-ft9366-git 1.94.100.r…-1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: problem
+    attributes:
+      label: What goes wrong?
+      options:
+        - The device is not found or does not open
+        - Enrollment fails
+        - Verification fails often (wrong rejections)
+        - A different finger or person is accepted
+        - Error during calibration ("Finger on the sensor during calibration")
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened and how often?
+      description: Steps to reproduce, and roughly how many attempts out of how many fail.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: fprintd log of a failing attempt
+      description: |
+        Enable debug logging, reproduce the problem, then copy the log:
+        ```
+        sudo systemctl set-environment G_MESSAGES_DEBUG=all
+        sudo systemctl restart fprintd
+        fprintd-verify
+        journalctl -u fprintd --since "-5 min" | grep -i -E 'ft9366|background|retrying|match:|error'
+        sudo systemctl unset-environment G_MESSAGES_DEBUG && sudo systemctl restart fprintd
+        ```
+        The log contains scores and background levels only, no image data.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I ran `sudo ft9366-setup-key` (or the script from `tools/ft9366`) and enrolled my fingers afterwards
+          required: true
+        - label: I did not attach any fingerprint images or data
+          required: true

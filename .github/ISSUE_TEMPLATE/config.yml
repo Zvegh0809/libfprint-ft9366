@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Zvegh0809/libfprint-ft9366/security/advisories/new
+    about: Please report security problems privately, not as a public issue.
+  - name: Other fingerprint readers (upstream libfprint)
+    url: https://gitlab.freedesktop.org/libfprint/libfprint/-/issues
+    about: This fork only adds the FT9366 driver; everything else is upstream libfprint.
