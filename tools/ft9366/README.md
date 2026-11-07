@@ -94,8 +94,8 @@ touches so different areas get covered.
 
 ## Known issues
 
-- Activating with a finger already on the sensor spoils the background
-  calibration; lift the finger and retry.
+- If a finger rests on the sensor when it activates, calibration waits (up to
+  a few seconds) for it to be lifted; keep the sensor clear when starting.
 - The finger-lift threshold and image polarity still need tuning
   (see the `TODO` comments in `ft9366.c`).
 

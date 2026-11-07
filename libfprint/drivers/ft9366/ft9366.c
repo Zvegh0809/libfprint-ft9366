@@ -60,6 +60,14 @@
 #define BG_TOL            60
 /* observed empty-sensor background mean: 2370-2570 */
 #define BG_SANE_MIN       2300
+/* A finger resting on the sensor through the whole calibration is detected
+ * by the background mean: a drop of more than BG_FINGER_DROP against the
+ * last accepted calibration (or BG_SANE_MIN on the first one). Calibration
+ * is then retried; after BG_RETRIES the new level is accepted anyway, so a
+ * genuine baseline shift (e.g. temperature) only costs one slow start. */
+#define BG_FINGER_DROP    150
+#define BG_RETRIES        10
+#define BG_RETRY_MS       300
 #define BG_BYTES          ((gsize) BG_FRAMES * RAW_W * RAW_H * sizeof (guint16))
 
 #define CHIP_ID           0x9362
@@ -107,6 +115,8 @@ struct _FpiDeviceFt9366
   guint16         *bg_frames;   /* BG_FRAMES * RAW_W * RAW_H */
   guint32          bg_means[BG_FRAMES];
   guint            bg_count;
+  guint            bg_retries;
+  guint32          bg_ref_mean;   /* last accepted calibration, 0 = none */
   gboolean         have_bg;
 
   /* task SSM results, reported from the done callback */
@@ -312,16 +322,34 @@ bg_accumulate (FpiDeviceFt9366 *self)
   self->bg_count++;
 }
 
-static void
-bg_finalize (FpiDeviceFt9366 *self)
+static guint32
+bg_max_mean (FpiDeviceFt9366 *self)
 {
   guint32 max_mean = 0;
-  gboolean use[BG_FRAMES] = { FALSE };
-  guint used = 0, k;
-  gsize i;
+  guint k;
 
   for (k = 0; k < self->bg_count; k++)
     max_mean = MAX (max_mean, self->bg_means[k]);
+  return max_mean;
+}
+
+static gboolean
+bg_finger_suspected (FpiDeviceFt9366 *self)
+{
+  guint32 m = bg_max_mean (self);
+
+  if (self->bg_ref_mean)
+    return m + BG_FINGER_DROP < self->bg_ref_mean;
+  return m < BG_SANE_MIN;
+}
+
+static void
+bg_finalize (FpiDeviceFt9366 *self)
+{
+  guint32 max_mean = bg_max_mean (self);
+  gboolean use[BG_FRAMES] = { FALSE };
+  guint used = 0, k;
+  gsize i;
 
   for (k = 0; k < self->bg_count; k++)
     if (self->bg_means[k] + BG_TOL >= max_mean)
@@ -350,6 +378,7 @@ bg_finalize (FpiDeviceFt9366 *self)
   fp_dbg ("background: %u/%u frames used, mean %u", used, self->bg_count, max_mean);
 
   explicit_bzero (self->bg_frames, BG_BYTES);
+  self->bg_ref_mean = max_mean;
   self->have_bg = TRUE;
 }
 
@@ -668,6 +697,14 @@ act_run_state (FpiSsm *ssm, FpDevice *dev)
         {
           fpi_ssm_jump_to_state (ssm, ACT_PREP);
         }
+      else if (bg_finger_suspected (self) && self->bg_retries < BG_RETRIES)
+        {
+          self->bg_retries++;
+          fp_info ("background mean %u: finger on the sensor? retrying (%u/%u)",
+                   bg_max_mean (self), self->bg_retries, BG_RETRIES);
+          bg_reset (self);
+          fpi_ssm_jump_to_state_delayed (ssm, ACT_PREP, BG_RETRY_MS);
+        }
       else
         {
           bg_finalize (self);
@@ -694,10 +731,9 @@ dev_activate (FpImageDevice *dev)
 
   self->deactivating = FALSE;
   self->finger_on = self->finger_off = FALSE;
+  self->bg_retries = 0;
   bg_reset (self);
 
-  /* TODO: a finger resting on the sensor spoils the background; check with
-   * the 0x80b8 probe first */
   ssm = fpi_ssm_new (FP_DEVICE (dev), act_run_state, ACT_NUM_STATES);
   fpi_ssm_start (ssm, act_done);
 }
