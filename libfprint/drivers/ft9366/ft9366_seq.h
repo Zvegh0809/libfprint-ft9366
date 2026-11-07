@@ -1,7 +1,7 @@
 /*
  * FT9366 (2808:a658) parancssorozatok.
- * GENERÁLT FÁJL – a Windows-driver USB-forgalmából (usbmon), clean-room módon.
- * Mezők: { hossz, { bájtok }, válaszhossz, késleltetés_ms a parancs előtt }
+ * GENERATED FILE - from the Windows driver's USB traffic (usbmon), clean-room.
+ * Fields: { length, { bytes }, reply length, delay_ms before the command }
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */

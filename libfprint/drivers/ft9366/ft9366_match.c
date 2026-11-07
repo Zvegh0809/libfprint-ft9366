@@ -1,5 +1,5 @@
 /*
- * FT9366 host-side fingerprint matcher – see ft9366_match.h
+ * FT9366 host-side fingerprint matcher - see ft9366_match.h
  *
  * The SIFT part follows Lowe (IJCV 60(2):91-110, 2004) with the parameter
  * conventions of the widely used OpenCV implementation (3 layers per octave,

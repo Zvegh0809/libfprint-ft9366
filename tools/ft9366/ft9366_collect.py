@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-FT9366 (2808:a658) – adatgyűjtés az illesztő fejlesztéséhez.
+FT9366 (2808:a658) data collection for matcher development.
 
-Ujjanként N nyers képet ment (16 bites PGM, 64x80, a szenzor eredeti adata),
-valamint az ülés elején felvett ujj nélküli háttérképeket.
+Saves N raw images per finger (16-bit PGM, 64x80, unprocessed sensor data)
+plus empty-sensor background frames captured at the start of the session.
 
-Használat:
-    sudo python3 ft9366_collect.py --finger jobb_mutato
-    sudo python3 ft9366_collect.py --finger jobb_kozep --count 20
+Usage:
+    sudo python3 ft9366_collect.py --finger right_index
+    sudo python3 ft9366_collect.py --finger right_middle --count 20
 
-Kimenet: ~/ft9366/data/<finger>/<idő>/ (bg_*.pgm, img_*.pgm, meta.json)
+Output: ~/ft9366/data/<finger>/<timestamp>/ (bg_*.pgm, img_*.pgm, meta.json)
 
-FIGYELEM: ezek valódi ujjlenyomatképek. Csak fejlesztéshez; a végén töröld őket.
-Függőség: python-pyusb
+WARNING: these are real fingerprint images. Development only; never commit
+them and delete them when done.
+Requires: python-pyusb
 """
 import argparse, datetime, json, os, pwd, sys, time
 
@@ -41,7 +42,7 @@ class Sensor:
         self.seq = seq
         self.dev = usb.core.find(idVendor=VID, idProduct=PID)
         if self.dev is None:
-            sys.exit("Nincs 2808:a658 eszköz (fut a Windows-konténer passthrough-val?)")
+            sys.exit("No 2808:a658 device (still passed through to a VM/container?)")
         if self.dev.is_kernel_driver_active(0):
             self.dev.detach_kernel_driver(0)
         self.dev.set_configuration()
@@ -75,7 +76,7 @@ class Sensor:
         raw = bytes(self.dev.read(EP_IN, RAW_LEN, TIMEOUT))
         self.run("post")
         if len(raw) != RAW_LEN:
-            raise RuntimeError(f"rövid kép: {len(raw)} bájt")
+            raise RuntimeError(f"short image: {len(raw)} bytes")
         return raw
 
     def wait_finger(self, timeout=60):
@@ -91,7 +92,7 @@ class Sensor:
         self.run("probe_pre")
         v = int.from_bytes(self.xfer(CMD_READ_9881, 2), "big") | 0x0002
         self.xfer(bytes.fromhex("05fa98810001") + v.to_bytes(2, "big"))
-        r = self.run("probe_post")          # utolsó válasz: 0x80b8, 4 szó
+        r = self.run("probe_post")          # last reply: 0x80b8, 4 words
         return min(int.from_bytes(r[i:i + 2], "big") for i in range(0, 8, 2))
 
     def wait_lift(self, timeout=30):
@@ -110,12 +111,12 @@ def mean16(raw):
 def save_pgm16(path, raw):
     with open(path, "wb") as f:
         f.write(f"P5 {W} {H} 4095\n".encode())
-        f.write(raw)                         # PGM16 big-endian, mint a szenzor
+        f.write(raw)                         # PGM16 is big-endian, like the sensor
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--finger", required=True, help="pl. jobb_mutato")
+    ap.add_argument("--finger", required=True, help="e.g. right_index")
     ap.add_argument("--count", type=int, default=20)
     ap.add_argument("--out", default=None)
     ap.add_argument("--seq", default=os.path.join(HERE, "ft9366_seq2.json"))
@@ -135,9 +136,9 @@ def main():
     try:
         s.run("wake")
         if s.xfer(CMD_READ_ID, 2) != b"\x93\x62":
-            sys.exit("Váratlan chip-azonosító")
+            sys.exit("Unexpected chip ID")
 
-        print("Háttér felvétele – NE érintsd az olvasót...")
+        print("Capturing background - do NOT touch the sensor...")
         time.sleep(1.0)
         means = []
         for k in range(BG_FRAMES):
@@ -147,14 +148,14 @@ def main():
             save_pgm16(os.path.join(outdir, f"bg_{k}.pgm"), raw)
             meta["bg"].append(dict(file=f"bg_{k}.pgm", mean=round(m, 1)))
         good = [m for m in means if m + BG_TOL >= max(means)]
-        print(f"  háttér átlagok: {[round(m) for m in means]}  (jó: {len(good)}/{BG_FRAMES})")
+        print(f"  background means: {[round(m) for m in means]}  (usable: {len(good)}/{BG_FRAMES})")
 
         n = 0
         while n < a.count:
-            print(f"[{n + 1}/{a.count}] Tedd rá az ujjad ({a.finger}) – mindig kicsit más részét...",
+            print(f"[{n + 1}/{a.count}] Place your finger ({a.finger}), a slightly different area each time...",
                   end="", flush=True)
             if not s.wait_finger():
-                print(" időtúllépés, kilépek.")
+                print(" timeout, exiting.")
                 break
             raw = s.read_image()
             m = mean16(raw)
@@ -163,25 +164,25 @@ def main():
             meta["images"].append(dict(file=name, mean=round(m, 1),
                                        t=round(time.time(), 3)))
             n += 1
-            print(f" OK (átlag {m:.0f}). Emeld fel.", end="", flush=True)
+            print(f" OK (mean {m:.0f}). Lift it.", end="", flush=True)
             if not s.wait_lift():
-                print(" (nem érzékeltem felemelést)")
+                print(" (lift not detected)")
             else:
                 print()
     except KeyboardInterrupt:
-        print("\nMegszakítva.")
+        print("\nInterrupted.")
     finally:
         s.close()
         meta["count"] = len(meta["images"])
         with open(os.path.join(outdir, "meta.json"), "w") as f:
             json.dump(meta, f, indent=1)
-        # a fájlok a felhasználóé legyenek, ne a rooté
+        # hand the files back to the invoking user instead of root
         for root, dirs, files in os.walk(os.path.join(base, a.finger)):
             for x in dirs + files:
                 os.chown(os.path.join(root, x), pw.pw_uid, pw.pw_gid)
         os.chown(os.path.join(base, a.finger), pw.pw_uid, pw.pw_gid)
         os.chown(base, pw.pw_uid, pw.pw_gid)
-        print(f"Mentve: {outdir}  ({meta['count']} kép)")
+        print(f"Saved: {outdir}  ({meta['count']} images)")
 
 
 if __name__ == "__main__":

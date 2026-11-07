@@ -1,26 +1,27 @@
 /*
- * FocalTech FT9366 + Realtek RTS5811 bridge (USB 2808:a658) – libfprint image driver
+ * FocalTech FT9366 + Realtek RTS5811 bridge (USB 2808:a658) - libfprint image driver
  *
- * Clean-room: a protokoll kizárólag a Windows-driver USB-forgalmának
- * megfigyeléséből származik (usbmon). Gyári kódot nem használ.
+ * Clean-room: the protocol was derived solely from observing the Windows
+ * driver's USB traffic (usbmon). No vendor code is used.
  *
- * Protokoll (minden parancs: műveleti kód + annak negáltja):
- *   04 fb AAAA NNNN        N db 16 bites regiszter olvasása  -> 2*N bájt
- *   05 fa AAAA NNNN DD..   16 bites regiszter írása
- *   06 f9 AAAA NNNN        adatblokk olvasása (kép: 9a05, 0x1400 szó = 10240 B)
- *   08 f7 RR 00 00         8 bites regiszter olvasása     -> 1 bájt
- *   09 f6 RR VV            8 bites regiszter írása
- *   4c/4f/50/51/4b ...     Realtek-híd parancsok
+ * Protocol (every command: opcode + its complement):
+ *   04 fb AAAA NNNN        read N 16-bit registers     -> 2*N bytes
+ *   05 fa AAAA NNNN DD..   write 16-bit registers
+ *   06 f9 AAAA NNNN        read data block (image: 9a05, 0x1400 words = 10240 B)
+ *   08 f7 RR 00 00         read 8-bit register          -> 1 byte
+ *   09 f6 RR VV            write 8-bit register
+ *   4c/4f/50/51/4b ...     Realtek bridge commands
  *
- * Kép: 64 x 80 szó, 16 bit big-endian, 12 bit hasznos; a 0. és 63. oszlop üres.
- * Ujjérzékelés: élesítés után a 0x9a8b 0x0000-t ad, ujj esetén újra 0x9362-t.
- * Felemelés: a 0x80b8-as 4 mért érték ujj nélkül ~0x0220, ujjal ~0x0100-0x0140.
+ * Image: 64 x 80 words, 16-bit big-endian, 12 bits used; columns 0 and 63 are empty.
+ * Finger detect: once armed, 0x9a8b reads 0x0000, and 0x9362 again on touch.
+ * Lift detect: the four 0x80b8 values are ~0x0220 without a finger,
+ * ~0x0100-0x0140 with one.
  *
- * Illesztés: a 60x77-es képen az NBIS nem talál elég minutiát, ezért saját
- * illesztőt használunk (ft9366_match.c: SIFT + RANSAC + korreláció az
- * illesztett átfedésen), az FpImageDeviceClass extract/match hookjain át.
+ * Matching: NBIS finds too few minutiae on a 60x77 image, so a custom matcher
+ * (ft9366_match.c: SIFT + RANSAC + correlation over the aligned overlap) is
+ * plugged in through the FpImageDeviceClass extract/match hooks.
  *
- * Állapot: KÍSÉRLETI. Lásd a TODO megjegyzéseket.
+ * Status: EXPERIMENTAL. See the TODO comments.
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
@@ -44,40 +45,38 @@
 #define RAW_W             64
 #define RAW_H             80
 #define RAW_LEN           (RAW_W * RAW_H * 2)
-/* Kivágás: a 0. és 63. oszlop üres, a felső 3 sor zajos/telített.
- * Marad 60 oszlop (2..61) x 77 sor (3..79). */
+/* Crop: columns 0/63 are empty, the top 3 rows are noisy/saturated.
+ * Leaves 60 columns (2..61) x 77 rows (3..79). */
 #define IMG_X0            2
 #define IMG_Y0            3
 #define IMG_W             (RAW_W - 2 * IMG_X0)
 #define IMG_H             (RAW_H - IMG_Y0)
-/* Nagyítás (saját bilineáris interpolációval). A mért vonalköz ~8.7 px,
- * vagyis a szenzor natívan ~460 dpi; a NBIS ~500 dpi-t vár, ezért 1. */
+/* Measured ridge spacing ~8.7 px, i.e. ~460 dpi native: no upscaling needed. */
 #define ENLARGE           1
 #define OUT_W             (IMG_W * ENLARGE)
 #define OUT_H             (IMG_H * ENLARGE)
-/* felüláteresztő szűrő ablakmérete (a vonalköz ~6 pixel) */
+/* high-pass window; ridge period is ~6 px */
 #define HP_BOX            9
-/* Aktiváláskor BG_FRAMES ujj nélküli képet veszünk fel. Ha közben ujj van a
- * szenzoron, az a kép átlaga ~200-450-nel kisebb; ezeket eldobjuk: csak a
- * legvilágosabbhoz képest BG_TOL-on belüli képeket átlagoljuk. */
+/* On activation BG_FRAMES empty frames are averaged into a background.
+ * A finger lowers a frame's mean by ~200-450, so only frames within BG_TOL
+ * of the brightest one are used. */
 #define BG_FRAMES         5
 #define BG_TOL            60
-/* ujj nélkül eddig 2370-2570 volt a háttér átlaga */
+/* observed empty-sensor background mean: 2370-2570 */
 #define BG_SANE_MIN       2300
 #define BG_BYTES          ((gsize) BG_FRAMES * RAW_W * RAW_H * sizeof (guint16))
 
 #define CHIP_ID           0x9362
 #define POLL_FINGER_MS    32
 #define POLL_LIFT_MS      100
-/* A 0x80b8 négy értékének mindegyike e fölött => nincs ujj. TODO: hangolni */
+/* All four 0x80b8 values above this => no finger. TODO: tune */
 #define FINGER_OFF_LEVEL  0x01c0
 
-/* Illesztés. A fejlesztői adatsoron (4 ujj x 20 kép, egy személy) a
- * különböző ujjú párok legmagasabb pontszáma 0.764 volt; 0.80-nál 15
- * regisztrációs képpel kb. 21% FRR, 0 hamis elfogadás. Kevés adat: a küszöböt
- * több ember mérése után újra kell hangolni. */
+/* On the development set (4 fingers x 20 images, one person) the best
+ * impostor score was 0.764; at 0.80 with 15 enroll images FRR is ~21% with
+ * no false accepts. Small dataset: retune with more subjects. */
 #define MATCH_THRESHOLD   0.80
-/* ennél kevesebb vonalas terület / kulcspont => újrapróbálás */
+/* below either limit the capture is retried */
 #define MIN_COVERAGE      0.30
 #define MIN_KEYPOINTS     10
 
@@ -94,25 +93,23 @@ struct _FpiDeviceFt9366
   FpiSsm          *task_ssm;
   gboolean         deactivating;
 
-  /* parancssor-futtató állapota */
+  /* command sequence runner */
   const Ft9366Cmd *seq;
   gsize            seq_len;
   gsize            seq_pos;
 
-  /* utolsó rövid válasz */
   guint8           reply[16];
   gsize            reply_len;
 
-  /* képek */
-  /* a nagy puffereket külön foglaljuk (a GObject példány max. 64 KB lehet) */
-  guint8          *raw;         /* RAW_LEN bájt */
+  /* allocated separately: GObject instances are limited to 64 KiB */
+  guint8          *raw;         /* RAW_LEN bytes */
   float           *bg;          /* RAW_W * RAW_H */
   guint16         *bg_frames;   /* BG_FRAMES * RAW_W * RAW_H */
   guint32          bg_means[BG_FRAMES];
   guint            bg_count;
   gboolean         have_bg;
 
-  /* a task-SSM eredménye, a done-callbackben jelentjük */
+  /* task SSM results, reported from the done callback */
   gboolean         finger_on;
   gboolean         finger_off;
   FpImage         *pending_img;
@@ -129,7 +126,7 @@ static const FpIdEntry id_table[] = {
 static void start_deactivate (FpiDeviceFt9366 *self);
 
 /* ------------------------------------------------------------------ */
-/* USB alapműveletek                                                    */
+/* USB primitives                                                       */
 /* ------------------------------------------------------------------ */
 
 static void
@@ -208,7 +205,7 @@ reply_word (FpiDeviceFt9366 *self, gsize i)
 }
 
 /* ------------------------------------------------------------------ */
-/* Parancssor-futtató al-állapotgép (a ft9366_seq.h tábláihoz)          */
+/* Sub-SSM that replays the ft9366_seq.h command tables                */
 /* ------------------------------------------------------------------ */
 
 enum seq_states {
@@ -278,7 +275,7 @@ run_seq_n (FpiSsm *parent, FpDevice *dev, const Ft9366Cmd *table, gsize n)
 }
 
 /* ------------------------------------------------------------------ */
-/* Kép feldolgozása                                                     */
+/* Image processing                                                     */
 /* ------------------------------------------------------------------ */
 
 static int
@@ -297,7 +294,6 @@ bg_reset (FpiDeviceFt9366 *self)
   self->bg_count = 0;
 }
 
-/* egy háttérjelölt kép eltárolása */
 static void
 bg_accumulate (FpiDeviceFt9366 *self)
 {
@@ -316,7 +312,6 @@ bg_accumulate (FpiDeviceFt9366 *self)
   self->bg_count++;
 }
 
-/* a jó (ujj nélküli) képek átlaga lesz a háttér */
 static void
 bg_finalize (FpiDeviceFt9366 *self)
 {
@@ -350,7 +345,7 @@ bg_finalize (FpiDeviceFt9366 *self)
     }
 
   if (max_mean < BG_SANE_MIN)
-    fp_warn ("background mean %u is low – finger on the sensor during calibration?",
+    fp_warn ("background mean %u is low - finger on the sensor during calibration?",
              max_mean);
   fp_dbg ("background: %u/%u frames used, mean %u", used, self->bg_count, max_mean);
 
@@ -358,14 +353,14 @@ bg_finalize (FpiDeviceFt9366 *self)
   self->have_bg = TRUE;
 }
 
-/* (x, y) a [0, w) x [0, h) tartományba szorítva */
+/* clamped pixel access */
 #define AT(buf, w, h, x, y) \
   (buf)[CLAMP ((gint) (y), 0, (h) - 1) * (w) + CLAMP ((gint) (x), 0, (w) - 1)]
 
 static FpImage *
 build_image (FpiDeviceFt9366 *self)
 {
-  /* statikus pufferek, használat után nullázzuk */
+  /* static scratch buffers, wiped after use */
   static float a[IMG_W * IMG_H];
   static float b[IMG_W * IMG_H];
   static double integ[(IMG_W + 1) * (IMG_H + 1)];
@@ -376,7 +371,7 @@ build_image (FpiDeviceFt9366 *self)
   float lo, hi;
   gint x, y;
 
-  /* 1. háttérlevonás + kivágás */
+  /* 1. background subtraction + crop */
   for (y = 0; y < IMG_H; y++)
     for (x = 0; x < IMG_W; x++)
       {
@@ -388,7 +383,7 @@ build_image (FpiDeviceFt9366 *self)
         a[y * IMG_W + x] = v;
       }
 
-  /* 2. 3x3-as Gauss-simítás (1 2 1 / 2 4 2 / 1 2 1) / 16 */
+  /* 2. 3x3 Gaussian blur */
   for (y = 0; y < IMG_H; y++)
     for (x = 0; x < IMG_W; x++)
       {
@@ -399,8 +394,8 @@ build_image (FpiDeviceFt9366 *self)
         b[y * IMG_W + x] = s / 16.0f;
       }
 
-  /* 3. felüláteresztő: a HP_BOX x HP_BOX ablak átlagának levonása
-   *    (integrálképpel; a szélen csak a képen belüli pixelek számítanak) */
+  /* 3. high-pass: subtract the HP_BOX box mean (integral image; edge
+   *    windows only count in-image pixels) */
   for (y = 0; y <= IMG_H; y++)
     integ[y * (IMG_W + 1)] = 0;
   for (x = 0; x <= IMG_W; x++)
@@ -422,7 +417,7 @@ build_image (FpiDeviceFt9366 *self)
         a[y * IMG_W + x] = b[y * IMG_W + x] - (float) (s / ((x1 - x0) * (y1 - y0)));
       }
 
-  /* 4. kontraszt: 2% - 98% percentilis 0..255-re */
+  /* 4. stretch the 2nd-98th percentile to 0..255 */
   memcpy (b, a, sizeof (a));
   qsort (b, n, sizeof (float), cmp_float);
   lo = b[n / 50];
@@ -432,7 +427,7 @@ build_image (FpiDeviceFt9366 *self)
   for (gsize i = 0; i < n; i++)
     small[i] = CLAMP ((gint) ((a[i] - lo) * 255.0f / (hi - lo)), 0, 255);
 
-  /* 5. bilineáris nagyítás ENLARGE-szeresre */
+  /* 5. bilinear scaling by ENLARGE */
   img = fp_image_new (OUT_W, OUT_H);
   for (y = 0; y < OUT_H; y++)
     {
@@ -454,7 +449,7 @@ build_image (FpiDeviceFt9366 *self)
         }
     }
 
-  /* TODO: polaritás ellenőrzése (FPI_IMAGE_COLORS_INVERTED?) */
+  /* TODO: verify polarity (FPI_IMAGE_COLORS_INVERTED?) */
   img->flags = 0;
 
   explicit_bzero (a, sizeof (a));
@@ -462,9 +457,9 @@ build_image (FpiDeviceFt9366 *self)
   explicit_bzero (integ, sizeof (integ));
   explicit_bzero (small, sizeof (small));
 
-  /* CSAK FEJLESZTÉSHEZ: a libfprintnek átadott kép kimentése.
-   * Alapból ki sem fordul: -Dc_args=-DFT9366_DEVEL kell hozzá, így egy
-   * kiadott buildben környezeti változóval sem lehet képet lemezre íratni. */
+  /* DEVELOPMENT ONLY: dump the image handed to libfprint. Compiled in only
+   * with -Dc_args=-DFT9366_DEVEL, so release builds cannot write images to
+   * disk even if FT9366_DUMP is set. */
 #ifdef FT9366_DEVEL
   {
     const char *dump = g_getenv ("FT9366_DUMP");
@@ -486,7 +481,7 @@ build_image (FpiDeviceFt9366 *self)
 }
 
 /* ------------------------------------------------------------------ */
-/* Közös done-kezelés                                                   */
+/* Shared task completion                                               */
 /* ------------------------------------------------------------------ */
 
 static void
@@ -510,8 +505,8 @@ task_done_common (FpiDeviceFt9366 *self, GError *error)
       return;
     }
 
-  /* az eredményeket csak itt jelentjük: a libfprint ilyenkor állapotot vált
-   * és újabb SSM-et indíthat, ami nem futhat az előzővel egyszerre */
+  /* Results are reported only here: libfprint changes state in response and
+   * may start a new SSM, which must not overlap with the finished one. */
   if (self->finger_on)
     {
       self->finger_on = FALSE;
@@ -544,7 +539,7 @@ start_task (FpiDeviceFt9366 *self, FpiSsmHandlerCallback handler, int nstates)
 }
 
 /* ------------------------------------------------------------------ */
-/* Megnyitás: ébresztés + chip-azonosító                               */
+/* Open: wake up + chip ID check                                       */
 /* ------------------------------------------------------------------ */
 
 enum open_states {
@@ -609,7 +604,7 @@ dev_open (FpImageDevice *dev)
   GError *error = NULL;
   FpiSsm *ssm;
 
-  /* Fail closed: titkosítókulcs nélkül nem dolgozunk */
+  /* Fail closed: refuse to work without the template key */
   if (!ft9366_crypt_check_key (&error))
     {
       fpi_image_device_open_complete (dev,
@@ -646,7 +641,7 @@ dev_close (FpImageDevice *dev)
 }
 
 /* ------------------------------------------------------------------ */
-/* Aktiválás: háttérkép felvétele (ujj nélkül!)                        */
+/* Activate: capture the background (no finger!)                      */
 /* ------------------------------------------------------------------ */
 
 enum act_states {
@@ -726,14 +721,14 @@ dev_activate (FpImageDevice *dev)
   self->finger_on = self->finger_off = FALSE;
   bg_reset (self);
 
-  /* TODO: ha a felhasználó épp rajta tartja az ujját, a háttér rossz lesz;
-   * a 0x80b8-as próbával előtte ellenőrizni kellene */
+  /* TODO: a finger resting on the sensor spoils the background; check with
+   * the 0x80b8 probe first */
   ssm = fpi_ssm_new (FP_DEVICE (dev), act_run_state, ACT_NUM_STATES);
   fpi_ssm_start (ssm, act_done);
 }
 
 /* ------------------------------------------------------------------ */
-/* Ujjra várás                                                          */
+/* Wait for finger                                                      */
 /* ------------------------------------------------------------------ */
 
 enum fon_states {
@@ -787,7 +782,7 @@ fon_run_state (FpiSsm *ssm, FpDevice *dev)
 }
 
 /* ------------------------------------------------------------------ */
-/* Kép készítése                                                        */
+/* Capture                                                              */
 /* ------------------------------------------------------------------ */
 
 enum cap_states {
@@ -835,7 +830,7 @@ cap_run_state (FpiSsm *ssm, FpDevice *dev)
 }
 
 /* ------------------------------------------------------------------ */
-/* Felemelésre várás                                                    */
+/* Wait for finger lift                                                 */
 /* ------------------------------------------------------------------ */
 
 enum foff_states {
@@ -874,7 +869,7 @@ foff_run_state (FpiSsm *ssm, FpDevice *dev)
 
     case FOFF_9881_WRITE:
       {
-        /* a Windows-driver ilyenkor a 0x9881 1. bitjét állítja be
+        /* the Windows driver sets bit 1 of 0x9881 here
          * (0f0c -> 0f0e, 0f8d -> 0f8f) */
         guint16 v = reply_word (self, 0) | 0x0002;
         guint8 cmd[8] = { 0x05, 0xfa, 0x98, 0x81, 0x00, 0x01, v >> 8, v & 0xff };
@@ -889,7 +884,7 @@ foff_run_state (FpiSsm *ssm, FpDevice *dev)
 
     case FOFF_CHECK:
       {
-        /* a probe_post-ban az utolsó válaszos parancs a 0x80b8 olvasása */
+        /* the last command with a reply in probe_post reads 0x80b8 */
         guint16 m = G_MAXUINT16;
         gsize i;
 
@@ -915,7 +910,7 @@ foff_run_state (FpiSsm *ssm, FpDevice *dev)
 }
 
 /* ------------------------------------------------------------------ */
-/* Állapotváltás és deaktiválás                                        */
+/* State changes and deactivation                                      */
 /* ------------------------------------------------------------------ */
 
 static void
@@ -983,17 +978,17 @@ dev_deactivate (FpImageDevice *dev)
   FpiDeviceFt9366 *self = FPI_DEVICE_FT9366 (dev);
 
   self->deactivating = TRUE;
-  /* ha fut feladat, az a következő ellenőrzési pontnál leáll,
-   * és a task_done_common indítja a deaktiválást */
+  /* a running task stops at its next checkpoint and task_done_common
+   * then starts the deactivation */
   if (self->task_ssm == NULL)
     start_deactivate (self);
 }
 
 /* ------------------------------------------------------------------ */
-/* Illesztés (az NBIS helyett)                                          */
+/* Matching (replaces NBIS)                                             */
 /* ------------------------------------------------------------------ */
 
-/* munkaszálon fut: csak a képet olvassa, eszközállapotot nem */
+/* runs in a worker thread: must only read the image, not device state */
 static GVariant *
 ft9366_extract_template (FpImageDevice *dev, FpImage *image, GError **error)
 {
@@ -1033,8 +1028,8 @@ ft9366_extract_template (FpImageDevice *dev, FpImage *image, GError **error)
   ftm_serialize (f, buf);
   ftm_free (f);
 
-  /* A sablon (benne a kép) csak titkosítva kerül az FpPrint-be, így a
-   * fprintd már rejtjelezett adatot ír a /var/lib/fprint alá. */
+  /* The template (which contains the image) is stored only encrypted, so
+   * fprintd never writes plaintext to /var/lib/fprint. */
   sealed = ft9366_crypt_seal (buf, len, &sealed_len, &local_error);
   ft9366_crypt_free_plain (g_steal_pointer (&buf), len);
   if (!sealed)
@@ -1049,7 +1044,6 @@ ft9366_extract_template (FpImageDevice *dev, FpImage *image, GError **error)
   return v;
 }
 
-/* Visszafejt + deszerializál. Hibánál NULL és @error. */
 static FtmFeatures *
 features_from_variant (GVariant *v, GError **error)
 {
@@ -1070,7 +1064,6 @@ features_from_variant (GVariant *v, GError **error)
   plain = ft9366_crypt_open (data, len, &plain_len, &local_error);
   if (!plain)
     {
-      /* régi, titkosítatlan sablon vagy más kulcs: újra kell regisztrálni */
       g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
                    "%s; please re-enroll this finger", local_error->message);
       return NULL;
@@ -1145,7 +1138,7 @@ fpi_device_ft9366_finalize (GObject *object)
 {
   FpiDeviceFt9366 *self = FPI_DEVICE_FT9366 (object);
 
-  /* ujjlenyomat-adat ne maradjon a felszabadított memóriában */
+  /* do not leave fingerprint data in freed memory */
   explicit_bzero (self->raw, RAW_LEN);
   explicit_bzero (self->bg, RAW_W * RAW_H * sizeof (float));
   explicit_bzero (self->bg_frames, BG_BYTES);
@@ -1170,7 +1163,7 @@ fpi_device_ft9366_class_init (FpiDeviceFt9366Class *klass)
   dev_class->type = FP_DEVICE_TYPE_USB;
   dev_class->id_table = id_table;
   dev_class->scan_type = FP_SCAN_TYPE_PRESS;
-  dev_class->nr_enroll_stages = 16;   /* a Windows-driver is 16 érintést kér */
+  dev_class->nr_enroll_stages = 16;   /* same as the Windows driver */
 
   img_class->img_open = dev_open;
   img_class->img_close = dev_close;
@@ -1180,7 +1173,7 @@ fpi_device_ft9366_class_init (FpiDeviceFt9366Class *klass)
 
   img_class->img_width = OUT_W;
   img_class->img_height = OUT_H;
-  /* saját illesztő; a bz3_threshold így nincs használatban */
+  /* custom matcher; bz3_threshold is unused */
   img_class->extract_template = ft9366_extract_template;
   img_class->match_template = ft9366_match_template;
 }

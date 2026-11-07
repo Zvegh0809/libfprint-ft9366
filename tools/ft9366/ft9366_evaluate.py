@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-FT9366 illesztő-kiértékelés a ~/ft9366/data alatti felvételeken.
+FT9366 matcher evaluation on the captures under ~/ft9366/data.
 
-Módszer: kép-javítás (háttérlevonás, Gauss, felüláteresztő) -> SIFT kulcspontok
-(3x nagyítás) -> arányteszt -> RANSAC hasonlósági transzformáció -> NCC az
-illesztett átfedésen (csak ahol mindkét képen van vonalrajzolat).
+Method: enhancement (background subtraction, Gaussian, high-pass) -> SIFT
+keypoints (3x upscaled) -> ratio test -> RANSAC similarity -> NCC over the
+aligned overlap (only where both images contain ridges).
 
-Kimenet: ujjanként keresztvalidált FRR / FAR különböző regisztrációs méretekre.
+Output: per-finger cross-validated FRR / FAR for several enrollment sizes.
 
-Függőségek: sudo pacman -S python-numpy python-opencv
-Használat:  python3 ft9366_evaluate.py [--data ~/ft9366/data]
+Requires: python-numpy, python-opencv
+Usage:    python3 ft9366_evaluate.py [--data ~/ft9366/data]
 """
 import argparse, glob, os, sys
 import numpy as np
@@ -100,12 +100,12 @@ def main():
                 fingers.append(os.path.basename(fdir)); E.append(enhance(read16(p), bg))
     n = len(E)
     if n < 4:
-        sys.exit("Kevés kép.")
+        sys.exit("Not enough images.")
     fing = np.array(fingers)
     idx = np.zeros(n, int)
     for f in set(fingers):
         sel = np.where(fing == f)[0]; idx[sel] = np.arange(len(sel))
-    print(f"{n} kép, {len(set(fingers))} ujj: {sorted(set(fingers))}")
+    print(f"{n} images, {len(set(fingers))} fingers: {sorted(set(fingers))}")
 
     F = [features(e) for e in E]
     C = np.zeros((n, n))
@@ -117,7 +117,7 @@ def main():
                     C[i, j] = aligned_ncc(E[i], E[j], M)
 
     imp_pairs = C[fing[:, None] != fing[None, :]]
-    print(f"Különböző ujjú képpárok: {imp_pairs.size}, legmagasabb pontszám: {imp_pairs.max():.3f}")
+    print(f"Impostor pairs: {imp_pairs.size}, highest score: {imp_pairs.max():.3f}")
     per = min(np.bincount(np.unique(fing, return_inverse=True)[1]))
     for nen in (5, 10, 15):
         if nen >= per:
@@ -133,7 +133,7 @@ def main():
                         (G if fing[p] == f else I).append(max(C[p, t] for t in tm))
         G = np.array(G); I = np.array(I)
         for thr in (0.75, 0.8, 0.85):
-            print(f"  regisztráció {nen:2d} kép, küszöb {thr}: FRR {(G < thr).mean() * 100:5.1f}%  "
+            print(f"  enroll {nen:2d} images, threshold {thr}: FRR {(G < thr).mean() * 100:5.1f}%  "
                   f"FAR {(I >= thr).mean() * 100:.2f}%")
 
 

@@ -1,22 +1,22 @@
 /*
- * FT9366 – sablonok titkosítása tároláshoz (AES-256-GCM, OpenSSL 3)
+ * FT9366 template encryption at rest (AES-256-GCM, OpenSSL 3)
  *
- * A host-oldali illesztő sablonja a 60x77-es, feljavított ujjlenyomatképet
- * is tartalmazza (az NCC-pontozás ezen fut), vagyis a sablon gyakorlatilag
- * maga az ujjlenyomat. Ezért minden sablon-blob csak titkosítva hagyja el a
- * drivert; a nyílt szöveg csak az illesztés idejére, memóriában létezik.
+ * The host-side matcher's template contains the enhanced 60x77 fingerprint
+ * image (NCC scoring runs on it), so a template is effectively the
+ * fingerprint itself. Templates therefore only leave the driver encrypted;
+ * plaintext exists in memory only while matching.
  *
- * Blob-formátum (v1):
- *   "FT9E" | 0x01 | nonce[12] | rejtjelezett szöveg | tag[16]
- * Az AEAD kiegészítő adata (AAD): a 5 bájtos fejléc + FT9366_CRYPT_CONTEXT,
- * így más célra/más formátumverzióval titkosított blob nem fogadható el.
+ * Blob format (v1):
+ *   "FT9E" | 0x01 | nonce[12] | ciphertext | tag[16]
+ * AAD: the 5-byte header + a fixed context string, so blobs encrypted for
+ * another purpose or format version are rejected.
  *
- * Kulcs (32 bájt, nyers):
- *   1. $CREDENTIALS_DIRECTORY/ft9366-template.key  – éles használat:
- *      systemd-hitelesítő adat, a fprintd.service kapja meg TPM2-vel
- *      lezárva (LoadCredentialEncrypted=), lásd a README-t;
- *   2. $FT9366_KEY_FILE – csak fejlesztéshez (pl. examples/enroll).
- * Kulcs nélkül a driver nem regisztrál és nem illeszt (fail closed).
+ * Key (32 raw bytes):
+ *   1. $CREDENTIALS_DIRECTORY/ft9366-template.key - production: a systemd
+ *      credential passed to fprintd.service, sealed with TPM2
+ *      (LoadCredentialEncrypted=), see tools/ft9366/TEMPLATE-ENCRYPTION.md;
+ *   2. $FT9366_KEY_FILE - development only (e.g. examples/enroll).
+ * Without a key the driver neither enrolls nor matches (fail closed).
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
@@ -35,30 +35,30 @@ G_BEGIN_DECLS
 GQuark ft9366_crypt_error_quark (void);
 
 typedef enum {
-  FT9366_CRYPT_ERROR_NO_KEY,     /* nincs (érvényes) kulcs           */
-  FT9366_CRYPT_ERROR_FORMAT,     /* nem ilyen formátumú blob         */
-  FT9366_CRYPT_ERROR_AUTH,       /* hitelesítés sikertelen / más kulcs */
-  FT9366_CRYPT_ERROR_INTERNAL,   /* OpenSSL-hiba, OOM                */
+  FT9366_CRYPT_ERROR_NO_KEY,     /* no (valid) key                 */
+  FT9366_CRYPT_ERROR_FORMAT,     /* not a sealed blob              */
+  FT9366_CRYPT_ERROR_AUTH,       /* tag mismatch or wrong key      */
+  FT9366_CRYPT_ERROR_INTERNAL,   /* OpenSSL error, OOM             */
 } Ft9366CryptError;
 
-/* Igaz, ha van használható kulcs (megnyitáskor hívjuk: kulcs nélkül az
- * eszköz meg sem nyílik, így nem keletkezhet titkosítatlan sablon). */
+/* Called on open: without a usable key the device does not open, so no
+ * unencrypted template can ever be produced. */
 gboolean ft9366_crypt_check_key (GError **error);
 
-/* Titkosítás. Visszaad egy új, len + FT9366_CRYPT_OVERHEAD bájtos blobot
- * (g_free-vel felszabadítandó), vagy NULL-t és @error-t. */
+/* Returns a new blob of len + FT9366_CRYPT_OVERHEAD bytes (free with
+ * g_free), or NULL and sets @error. */
 guint8 *ft9366_crypt_seal (const guint8 *plain, gsize len,
                            gsize *out_len, GError **error);
 
-/* Visszafejtés + hitelesítés. A visszaadott puffert a hívó
- * ft9366_crypt_free_plain()-nel szabadítja fel (nullázza is). */
+/* Decrypts and authenticates. Free the result with
+ * ft9366_crypt_free_plain(), which also wipes it. */
 guint8 *ft9366_crypt_open (const guint8 *blob, gsize len,
                            gsize *out_len, GError **error);
 
 void    ft9366_crypt_free_plain (guint8 *plain, gsize len);
 
-/* Igaz, ha a blob ebben a formátumban van (titkosítatlan régi sablonok
- * felismeréséhez). Nem ellenőrzi a hitelességet. */
+/* Format check only (detects old unencrypted templates); does not
+ * authenticate. */
 gboolean ft9366_crypt_is_sealed (const guint8 *blob, gsize len);
 
 G_END_DECLS

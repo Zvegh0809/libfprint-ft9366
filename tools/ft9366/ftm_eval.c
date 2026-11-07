@@ -1,5 +1,5 @@
 /*
- * ftm_eval – offline evaluation of ft9366_match.c on recorded sessions
+ * ftm_eval - offline evaluation of ft9366_match.c on recorded sessions
  *
  *   ftm_eval <data-dir> [score-matrix-out.bin] [image-dump-dir]
  *
@@ -226,7 +226,7 @@ main (int argc, char **argv)
       if (cnt < per)
         per = cnt;
     }
-  printf ("%d kép, %d ujj\n", n, nf);
+  printf ("%d images, %d fingers\n", n, nf);
 
   t0 = now ();
   for (i = 0; i < n; i++)
@@ -251,10 +251,10 @@ main (int argc, char **argv)
       if (finger[i] != finger[j] && C[i][j] > imp_max)
         imp_max = C[i][j];
 
-  printf ("kulcspont/kép: min %d, átlag %.0f, max %d\n", kpmin, kpsum / n, kpmax);
-  printf ("idő: kinyerés %.1f ms/kép, illesztés %.2f ms/pár\n",
+  printf ("keypoints/image: min %d, mean %.0f, max %d\n", kpmin, kpsum / n, kpmax);
+  printf ("time: extraction %.1f ms/image, matching %.2f ms/pair\n",
           1000 * t_ext / n, 1000 * t_match / ((double) n * (n - 1)));
-  printf ("különböző ujjú párok legmagasabb pontszáma: %.3f\n", imp_max);
+  printf ("highest impostor score: %.3f\n", imp_max);
 
   for (int nen = 5; nen <= 15; nen += 5)
     {
@@ -296,7 +296,7 @@ main (int argc, char **argv)
             fr += G[i] < thr;
           for (i = 0; i < ni; i++)
             fa += I[i] >= thr;
-          printf ("  regisztráció %2d kép, küszöb %.2f: FRR %5.1f%%  FAR %.2f%%\n",
+          printf ("  enroll %2d images, threshold %.2f: FRR %5.1f%%  FAR %.2f%%\n",
                   nen, thr, 100.0 * fr / ng, 100.0 * fa / ni);
         }
     }
@@ -324,7 +324,7 @@ main (int argc, char **argv)
         free (buf);
         if (!g)
           {
-            printf ("HIBA: deszerializálás sikertelen (%d)\n", i);
+            printf ("ERROR: deserialisation failed (%d)\n", i);
             return 1;
           }
         ftm_free (F[i]);
@@ -334,8 +334,8 @@ main (int argc, char **argv)
       for (j = 0; j < n; j++)
         if (i != j)
           maxdiff = fmax (maxdiff, fabs (ftm_score (F[i], F[j]) - C[i][j]));
-    printf ("szerializálás: átlag %.1f KB/kép, oda-vissza max eltérés %.3g, "
-            "hibás bemenet elfogadva: %d\n", total / 1024.0 / n, maxdiff, bad);
+    printf ("serialisation: mean %.1f KB/image, round-trip max deviation %.3g, "
+            "corrupt inputs accepted: %d\n", total / 1024.0 / n, maxdiff, bad);
   }
 
   if (argc > 2)

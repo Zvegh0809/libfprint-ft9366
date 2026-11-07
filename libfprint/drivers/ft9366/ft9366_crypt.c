@@ -1,5 +1,5 @@
 /*
- * FT9366 – sablonok titkosítása tároláshoz – lásd ft9366_crypt.h
+ * FT9366 template encryption at rest - see ft9366_crypt.h
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
@@ -29,11 +29,11 @@ G_STATIC_ASSERT (FT9366_CRYPT_OVERHEAD == HDR_LEN + NONCE_LEN + TAG_LEN);
 G_DEFINE_QUARK (ft9366-crypt-error-quark, ft9366_crypt_error)
 
 /* ------------------------------------------------------------------ */
-/* Kulcs                                                                */
+/* Key                                                                  */
 /* ------------------------------------------------------------------ */
 
-/* Pontosan FT9366_CRYPT_KEY_LEN bájtot olvas a fájlból; ha rövidebb vagy
- * hosszabb, hibát ad. Köztes másolat nem marad. */
+/* Reads exactly FT9366_CRYPT_KEY_LEN bytes; any other length is an error.
+ * No intermediate copy is left behind. */
 static gboolean
 read_key_file (const char *path, gboolean check_mode,
                guint8 key[FT9366_CRYPT_KEY_LEN], GError **error)
@@ -93,15 +93,15 @@ load_key (guint8 key[FT9366_CRYPT_KEY_LEN], GError **error)
   const char *dir = g_getenv ("CREDENTIALS_DIRECTORY");
   const char *dev = g_getenv ("FT9366_KEY_FILE");
 
-  /* Éles út: systemd credential. A könyvtárat a systemd hozza létre,
-   * csak a szolgáltatás olvashatja, ezért itt nem nézzük a módot. */
+  /* Production: systemd credential. systemd creates the directory readable
+   * only by the service, so the file mode is not checked here. */
   if (dir)
     {
       g_autofree char *path = g_build_filename (dir, FT9366_CRYPT_CRED_NAME, NULL);
       return read_key_file (path, FALSE, key, error);
     }
 
-  /* Fejlesztői út (pl. examples/enroll root nélkül) */
+  /* Development (e.g. examples/enroll without root) */
   if (dev)
     return read_key_file (dev, TRUE, key, error);
 
@@ -173,8 +173,8 @@ ft9366_crypt_seal (const guint8 *plain, gsize len, gsize *out_len, GError **erro
   ct = nonce + NONCE_LEN;
   tag = ct + len;
 
-  /* 96 bites véletlen nonce: kulcsonként néhány száz titkosításnál az
-   * ütközés esélye elhanyagolható (NIST SP 800-38D, 8.3: <= 2^32 hívás) */
+  /* Random 96-bit nonce: safe far below the 2^32 invocations per key
+   * allowed by NIST SP 800-38D, 8.3 */
   if (RAND_bytes (nonce, NONCE_LEN) != 1)
     goto out;
 
@@ -256,7 +256,7 @@ ft9366_crypt_open (const guint8 *blob, gsize len, gsize *out_len, GError **error
       aad_add_dec (ctx, blob) &&
       EVP_DecryptUpdate (ctx, plain, &outl, ct, (int) pl) == 1 &&
       EVP_CIPHER_CTX_ctrl (ctx, EVP_CTRL_GCM_SET_TAG, TAG_LEN, (void *) tag) == 1)
-    rc = EVP_DecryptFinal_ex (ctx, plain + outl, &fin);   /* tag-ellenőrzés */
+    rc = EVP_DecryptFinal_ex (ctx, plain + outl, &fin);   /* verifies the tag */
 
   OPENSSL_cleanse (key, sizeof (key));
   EVP_CIPHER_CTX_free (ctx);

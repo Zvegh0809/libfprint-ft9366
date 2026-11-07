@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-FT9366 (USB 2808:a658) – proof of concept: egy ujjlenyomatkép kiolvasása Linuxról.
+FT9366 (USB 2808:a658) proof of concept: read one fingerprint image on Linux.
 
-Clean-room: a parancsok kizárólag a Windows-driver USB-forgalmából (usbmon) származnak,
-a ft9366_seq.json-ban vannak. Gyári kódot nem használ.
+Clean-room: the commands come solely from the Windows driver's USB traffic
+(usbmon), stored in ft9366_seq.json. No vendor code is used.
 
-Használat (a Windows-konténer passthrough NÉLKÜL fusson, vagy legyen leállítva):
-    sudo python3 ft9366_poc.py                # a felvett "arm" szakasszal indul
-    sudo python3 ft9366_poc.py --full-init    # előtte a teljes 01-es init (kalibrációval)
+Usage (no VM/container may hold the device via USB passthrough):
+    sudo python3 ft9366_poc.py                # start with the recorded "arm" stage
+    sudo python3 ft9366_poc.py --full-init    # run the full init (with calibration) first
 
-Kimenet: fp_raw16.pgm (16 bites nyers, 62x80) és fp_view.pgm (8 bites, kontrasztra húzva).
-Függőség: python-pyusb  (sudo pacman -S python-pyusb)
+Output: fp_raw16.pgm (16-bit raw, 62x80) and fp_view.pgm (8-bit, contrast stretched).
+Requires: python-pyusb
 """
 import argparse, json, os, sys, time
 
@@ -19,7 +19,7 @@ import usb.util
 
 VID, PID = 0x2808, 0xA658
 EP_OUT, EP_IN = 0x01, 0x82
-W, H = 64, 80                 # nyers kép: 64 szó x 80 sor, 16 bit big-endian
+W, H = 64, 80                 # raw image: 64 words x 80 rows, 16-bit big-endian
 TIMEOUT = 2000
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -33,12 +33,12 @@ def xfer(dev, out_hex, inlen, expect, verbose):
     if verbose or (expect and data.hex() != expect):
         mark = "  " if not expect or data.hex() == expect else "!!"
         print(f"{mark} >> {out_hex:<46} << {data.hex()[:32]}"
-              + (f"   (felvételen: {expect})" if expect and data.hex() != expect else ""))
+              + (f"   (recorded: {expect})" if expect and data.hex() != expect else ""))
     return data
 
 
 def run(dev, seq, name, verbose):
-    print(f"-- {name} ({len(seq)} parancs)")
+    print(f"-- {name} ({len(seq)} commands)")
     for out_hex, inlen, expect, gap in seq:
         if gap:
             time.sleep(gap)
@@ -46,14 +46,14 @@ def run(dev, seq, name, verbose):
 
 
 def wait_finger(dev, timeout_s=30):
-    """A Windows-driver ~32 ms-onként olvassa a 0x9a8b-t: 0x0000 = várakozik,
-    0x9362 = esemény (ujj)."""
-    print(f"-- tedd az ujjad az olvasóra (max {timeout_s} s)...")
+    """Poll 0x9a8b every ~32 ms like the Windows driver: 0x0000 = waiting,
+    0x9362 = finger."""
+    print(f"-- place your finger on the sensor (max {timeout_s} s)...")
     t0 = time.time()
     while time.time() - t0 < timeout_s:
         r = xfer(dev, "04fb9a8b0001", 2, "", False)
         if r == b"\x93\x62":
-            print(f"   ujj érzékelve {time.time() - t0:.2f} s után")
+            print(f"   finger detected after {time.time() - t0:.2f} s")
             return True
         time.sleep(0.032)
     return False
@@ -61,7 +61,7 @@ def wait_finger(dev, timeout_s=30):
 
 def save_pgm(raw):
     rows = [raw[r * W * 2:(r + 1) * W * 2] for r in range(H)]
-    crop = [row[2:(W - 1) * 2] for row in rows]            # 0. és 63. oszlop üres
+    crop = [row[2:(W - 1) * 2] for row in rows]            # columns 0 and 63 are empty
     w = W - 2
     with open("fp_raw16.pgm", "wb") as f:
         f.write(f"P5 {w} {H} 4095\n".encode())
@@ -74,7 +74,7 @@ def save_pgm(raw):
     with open("fp_view.pgm", "wb") as f:
         f.write(f"P5 {w} {H} 255\n".encode())
         f.write(px)
-    print(f"-- mentve: fp_raw16.pgm, fp_view.pgm  (min {s[0]}, max {s[-1]})")
+    print(f"-- saved fp_raw16.pgm, fp_view.pgm  (min {s[0]}, max {s[-1]})")
 
 
 def main():
@@ -87,7 +87,7 @@ def main():
     seq = json.load(open(a.seq))
     dev = usb.core.find(idVendor=VID, idProduct=PID)
     if dev is None:
-        sys.exit("Nincs 2808:a658 eszköz (fut még a Windows-konténer passthrough-val?)")
+        sys.exit("No 2808:a658 device (still passed through to a VM/container?)")
     if dev.is_kernel_driver_active(0):
         dev.detach_kernel_driver(0)
     dev.set_configuration()
@@ -95,23 +95,23 @@ def main():
 
     try:
         if a.full_init:
-            run(dev, seq["init"], "init (01-es felvétel)", a.verbose)
-        run(dev, seq["arm"], "ébresztés + ujjfigyelés élesítése", a.verbose)
+            run(dev, seq["init"], "init", a.verbose)
+        run(dev, seq["arm"], "wake + arm finger detection", a.verbose)
         if not wait_finger(dev):
-            sys.exit("Nem jött ujj-esemény.")
-        run(dev, seq["capture"], "kép előkészítése", a.verbose)
-        print("-- kép olvasása (06 f9 9a05 1400)")
+            sys.exit("No finger event.")
+        run(dev, seq["capture"], "prepare capture", a.verbose)
+        print("-- reading image (06 f9 9a05 1400)")
         dev.write(EP_OUT, bytes.fromhex("06f99a051400"), TIMEOUT)
         raw = bytes(dev.read(EP_IN, W * H * 2, TIMEOUT))
-        print(f"   {len(raw)} bájt")
+        print(f"   {len(raw)} bytes")
         if len(raw) == W * H * 2:
             save_pgm(raw)
-        run(dev, seq["post"], "visszaállítás", a.verbose)
+        run(dev, seq["post"], "restore", a.verbose)
     finally:
         try:
-            run(dev, seq["sleep"], "alvás", a.verbose)
+            run(dev, seq["sleep"], "sleep", a.verbose)
         except usb.core.USBError as e:
-            print("alvás parancs hiba:", e)
+            print("sleep sequence failed:", e)
         usb.util.release_interface(dev, 0)
 
 
