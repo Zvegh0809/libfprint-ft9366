@@ -216,6 +216,11 @@ usb:v10A5p9B24*
  ID_AUTOSUSPEND=1
  ID_PERSIST=0
 
+# Supported by libfprint driver ft9366
+usb:v2808pA658*
+ ID_AUTOSUSPEND=1
+ ID_PERSIST=0
+
 # Supported by libfprint driver goodixmoc
 usb:v27C6p5840*
 usb:v27C6p6014*
@@ -551,7 +556,6 @@ usb:v2808p9348*
 usb:v2808p93A9*
 usb:v2808pA553*
 usb:v2808pA573*
-usb:v2808pA658*
 usb:v2808pC652*
 usb:v298Dp2033*
 usb:v2DF0p0003*
