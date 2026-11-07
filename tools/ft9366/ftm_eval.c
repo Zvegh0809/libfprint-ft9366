@@ -71,7 +71,7 @@ cmp_float (const void *a, const void *b)
   return (x > y) - (x < y);
 }
 
-/* copy of build_image() from drivers/ft9366/ft9366.c (ENLARGE == 1) */
+/* copy of build_image() from drivers/ft9366/ft9366.c */
 static void
 build_image (const float *raw, const float *bg, unsigned char *small)
 {

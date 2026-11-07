@@ -51,10 +51,6 @@
 #define IMG_Y0            3
 #define IMG_W             (RAW_W - 2 * IMG_X0)
 #define IMG_H             (RAW_H - IMG_Y0)
-/* Measured ridge spacing ~8.7 px, i.e. ~460 dpi native: no upscaling needed. */
-#define ENLARGE           1
-#define OUT_W             (IMG_W * ENLARGE)
-#define OUT_H             (IMG_H * ENLARGE)
 /* high-pass window; ridge period is ~6 px */
 #define HP_BOX            9
 /* On activation BG_FRAMES empty frames are averaged into a background.
@@ -80,7 +76,8 @@
 #define MIN_COVERAGE      0.30
 #define MIN_KEYPOINTS     10
 
-G_STATIC_ASSERT (IMG_W == FTM_W && IMG_H == FTM_H && ENLARGE == 1);
+/* ridge spacing ~8.7 px (~460 dpi native), so the image is used unscaled */
+G_STATIC_ASSERT (IMG_W == FTM_W && IMG_H == FTM_H);
 
 static const guint8 cmd_read_id[]  = { 0x04, 0xfb, 0x9a, 0x8b, 0x00, 0x01 };
 static const guint8 cmd_read_img[] = { 0x06, 0xf9, 0x9a, 0x05, 0x14, 0x00 };
@@ -104,6 +101,9 @@ struct _FpiDeviceFt9366
   /* allocated separately: GObject instances are limited to 64 KiB */
   guint8          *raw;         /* RAW_LEN bytes */
   float           *bg;          /* RAW_W * RAW_H */
+  float           *work_a;      /* IMG_W * IMG_H, build_image() scratch */
+  float           *work_b;      /* IMG_W * IMG_H */
+  double          *work_integ;  /* (IMG_W + 1) * (IMG_H + 1) */
   guint16         *bg_frames;   /* BG_FRAMES * RAW_W * RAW_H */
   guint32          bg_means[BG_FRAMES];
   guint            bg_count;
@@ -360,11 +360,8 @@ bg_finalize (FpiDeviceFt9366 *self)
 static FpImage *
 build_image (FpiDeviceFt9366 *self)
 {
-  /* static scratch buffers, wiped after use */
-  static float a[IMG_W * IMG_H];
-  static float b[IMG_W * IMG_H];
-  static double integ[(IMG_W + 1) * (IMG_H + 1)];
-  static guint8 small[IMG_W * IMG_H];
+  float *a = self->work_a, *b = self->work_b;
+  double *integ = self->work_integ;
   const gsize n = IMG_W * IMG_H;
   const gint r = HP_BOX / 2;
   FpImage *img;
@@ -418,44 +415,22 @@ build_image (FpiDeviceFt9366 *self)
       }
 
   /* 4. stretch the 2nd-98th percentile to 0..255 */
-  memcpy (b, a, sizeof (a));
+  memcpy (b, a, n * sizeof (float));
   qsort (b, n, sizeof (float), cmp_float);
   lo = b[n / 50];
   hi = b[n - 1 - n / 50];
   if (hi <= lo)
     hi = lo + 1;
+  img = fp_image_new (IMG_W, IMG_H);
   for (gsize i = 0; i < n; i++)
-    small[i] = CLAMP ((gint) ((a[i] - lo) * 255.0f / (hi - lo)), 0, 255);
-
-  /* 5. bilinear scaling by ENLARGE */
-  img = fp_image_new (OUT_W, OUT_H);
-  for (y = 0; y < OUT_H; y++)
-    {
-      float sy = CLAMP ((y + 0.5f) / ENLARGE - 0.5f, 0.0f, IMG_H - 1.0f);
-      gint y0 = (gint) sy, y1 = MIN (y0 + 1, IMG_H - 1);
-      float fy = sy - y0;
-
-      for (x = 0; x < OUT_W; x++)
-        {
-          float sx = CLAMP ((x + 0.5f) / ENLARGE - 0.5f, 0.0f, IMG_W - 1.0f);
-          gint x0 = (gint) sx, x1 = MIN (x0 + 1, IMG_W - 1);
-          float fx = sx - x0;
-          float v = small[y0 * IMG_W + x0] * (1 - fy) * (1 - fx)
-                    + small[y0 * IMG_W + x1] * (1 - fy) * fx
-                    + small[y1 * IMG_W + x0] * fy * (1 - fx)
-                    + small[y1 * IMG_W + x1] * fy * fx;
-
-          img->data[y * OUT_W + x] = (guint8) CLAMP ((gint) (v + 0.5f), 0, 255);
-        }
-    }
+    img->data[i] = CLAMP ((gint) ((a[i] - lo) * 255.0f / (hi - lo)), 0, 255);
 
   /* TODO: verify polarity (FPI_IMAGE_COLORS_INVERTED?) */
   img->flags = 0;
 
-  explicit_bzero (a, sizeof (a));
-  explicit_bzero (b, sizeof (b));
-  explicit_bzero (integ, sizeof (integ));
-  explicit_bzero (small, sizeof (small));
+  explicit_bzero (a, n * sizeof (float));
+  explicit_bzero (b, n * sizeof (float));
+  explicit_bzero (integ, (IMG_W + 1) * (IMG_H + 1) * sizeof (double));
 
   /* DEVELOPMENT ONLY: dump the image handed to libfprint. Compiled in only
    * with -Dc_args=-DFT9366_DEVEL, so release builds cannot write images to
@@ -466,11 +441,11 @@ build_image (FpiDeviceFt9366 *self)
 
     if (dump)
       {
-        g_autofree char *hdr = g_strdup_printf ("P5 %d %d 255\n", OUT_W, OUT_H);
+        g_autofree char *hdr = g_strdup_printf ("P5 %d %d 255\n", IMG_W, IMG_H);
         g_autoptr(GByteArray) pgm = g_byte_array_new ();
 
         g_byte_array_append (pgm, (guint8 *) hdr, strlen (hdr));
-        g_byte_array_append (pgm, img->data, OUT_W * OUT_H);
+        g_byte_array_append (pgm, img->data, IMG_W * IMG_H);
         g_file_set_contents (dump, (char *) pgm->data, pgm->len, NULL);
         fp_dbg ("DEBUG: image dumped to %s", dump);
       }
@@ -1131,6 +1106,9 @@ fpi_device_ft9366_init (FpiDeviceFt9366 *self)
   self->raw = g_malloc0 (RAW_LEN);
   self->bg = g_malloc0 (RAW_W * RAW_H * sizeof (float));
   self->bg_frames = g_malloc0 (BG_BYTES);
+  self->work_a = g_new0 (float, IMG_W * IMG_H);
+  self->work_b = g_new0 (float, IMG_W * IMG_H);
+  self->work_integ = g_new0 (double, (IMG_W + 1) * (IMG_H + 1));
 }
 
 static void
@@ -1145,6 +1123,9 @@ fpi_device_ft9366_finalize (GObject *object)
   g_clear_pointer (&self->raw, g_free);
   g_clear_pointer (&self->bg, g_free);
   g_clear_pointer (&self->bg_frames, g_free);
+  g_clear_pointer (&self->work_a, g_free);
+  g_clear_pointer (&self->work_b, g_free);
+  g_clear_pointer (&self->work_integ, g_free);
   g_clear_object (&self->pending_img);
 
   G_OBJECT_CLASS (fpi_device_ft9366_parent_class)->finalize (object);
@@ -1171,8 +1152,8 @@ fpi_device_ft9366_class_init (FpiDeviceFt9366Class *klass)
   img_class->deactivate = dev_deactivate;
   img_class->change_state = dev_change_state;
 
-  img_class->img_width = OUT_W;
-  img_class->img_height = OUT_H;
+  img_class->img_width = IMG_W;
+  img_class->img_height = IMG_H;
   /* custom matcher; bz3_threshold is unused */
   img_class->extract_template = ft9366_extract_template;
   img_class->match_template = ft9366_match_template;
