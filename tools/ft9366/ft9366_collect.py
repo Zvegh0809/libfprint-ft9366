@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-2.1-or-later
 """
 FT9366 (2808:a658) data collection for matcher development.
 

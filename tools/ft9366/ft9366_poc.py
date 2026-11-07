@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-2.1-or-later
 """
 FT9366 (USB 2808:a658) proof of concept: read one fingerprint image on Linux.
 

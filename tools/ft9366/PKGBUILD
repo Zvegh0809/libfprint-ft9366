@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # libfprint with the FT9366 driver (template encryption), built from the
 # committed state of the ft9366 branch in a local clone at ~/libfprint.
 #

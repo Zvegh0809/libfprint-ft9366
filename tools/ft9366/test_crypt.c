@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
 /* Tests for ft9366_crypt; optional args: real unencrypted templates */
 #include "ft9366_crypt.h"
 #include "ft9366_match.h"

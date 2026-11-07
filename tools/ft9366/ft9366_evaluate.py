@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-2.1-or-later
 """
 FT9366 matcher evaluation on the captures under ~/ft9366/data.
 

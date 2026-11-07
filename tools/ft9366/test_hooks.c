@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
 /*
  * Test of the ft9366 extract/match hooks with real GVariants.
  * Includes ft9366.c directly; USB/SSM code is linked but never called.

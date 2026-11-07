@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # Create the FT9366 template key and hand it to fprintd as a systemd credential.
 #
 # - 32 random bytes, encrypted immediately with systemd-creds. With host+tpm2
