@@ -1,0 +1,14 @@
+post_install() {
+  cat <<'MSG'
+==> FT9366 driver: the device stays closed until a template key exists.
+    Create it once (needs a TPM2):   sudo ft9366-setup-key
+    Then enroll your fingers:        fprintd-enroll
+    Docs: /usr/share/doc/libfprint-ft9366-git/
+MSG
+}
+
+post_upgrade() {
+  if [ ! -e /etc/credstore.encrypted/ft9366-template.key ]; then
+    post_install
+  fi
+}

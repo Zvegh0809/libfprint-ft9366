@@ -1,0 +1,44 @@
+# Maintainer: Zvegh0809
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+pkgname=libfprint-ft9366-git
+pkgver=1.94.100.r0.g0000000
+pkgrel=1
+pkgdesc="libfprint with an unofficial driver for the FocalTech FT9366 (2808:a658) fingerprint sensor"
+arch=(x86_64)
+url="https://github.com/Zvegh0809/libfprint-ft9366"
+license=(LGPL-2.1-or-later)
+depends=(cairo glib2 libgudev libgusb openssl pixman systemd-libs)
+makedepends=(git glib2-devel gobject-introspection meson python systemd)
+optdepends=('fprintd: D-Bus daemon and PAM integration'
+            'tpm2-tss: seal the template key with the TPM (recommended)')
+provides=("libfprint=${pkgver%%.r*}" libfprint-2.so)
+conflicts=(libfprint libfprint-ft9366)
+install=libfprint-ft9366-git.install
+source=("libfprint::git+https://github.com/Zvegh0809/libfprint-ft9366.git#branch=ft9366")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd libfprint
+  local base
+  base=$(sed -n "s/^ *version: *'\([0-9.]*\)'.*/\1/p" meson.build | head -n1)
+  printf "%s.r%s.g%s" "$base" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  # FT9366_DEVEL is deliberately not set: release builds cannot dump images
+  arch-meson libfprint build \
+    -D doc=false \
+    -D gtk-examples=false \
+    -D installed-tests=false \
+    -D drivers=default
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+
+  local t=libfprint/tools/ft9366
+  install -Dm755 "$t/ft9366-setup-key.sh" "$pkgdir/usr/bin/ft9366-setup-key"
+  install -Dm644 -t "$pkgdir/usr/share/doc/$pkgname" "$t/README.md" "$t/TEMPLATE-ENCRYPTION.md"
+}
