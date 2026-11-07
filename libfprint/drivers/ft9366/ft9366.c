@@ -292,8 +292,8 @@ cmp_float (const void *a, const void *b)
 static void
 bg_reset (FpiDeviceFt9366 *self)
 {
-  memset (self->bg_frames, 0, BG_BYTES);
-  memset (self->bg_means, 0, sizeof (self->bg_means));
+  explicit_bzero (self->bg_frames, BG_BYTES);
+  explicit_bzero (self->bg_means, sizeof (self->bg_means));
   self->bg_count = 0;
 }
 
@@ -354,7 +354,7 @@ bg_finalize (FpiDeviceFt9366 *self)
              max_mean);
   fp_dbg ("background: %u/%u frames used, mean %u", used, self->bg_count, max_mean);
 
-  memset (self->bg_frames, 0, BG_BYTES);
+  explicit_bzero (self->bg_frames, BG_BYTES);
   self->have_bg = TRUE;
 }
 
@@ -457,10 +457,10 @@ build_image (FpiDeviceFt9366 *self)
   /* TODO: polaritás ellenőrzése (FPI_IMAGE_COLORS_INVERTED?) */
   img->flags = 0;
 
-  memset (a, 0, sizeof (a));
-  memset (b, 0, sizeof (b));
-  memset (integ, 0, sizeof (integ));
-  memset (small, 0, sizeof (small));
+  explicit_bzero (a, sizeof (a));
+  explicit_bzero (b, sizeof (b));
+  explicit_bzero (integ, sizeof (integ));
+  explicit_bzero (small, sizeof (small));
 
   /* CSAK FEJLESZTÉSHEZ: a libfprintnek átadott kép kimentése.
    * Alapból ki sem fordul: -Dc_args=-DFT9366_DEVEL kell hozzá, így egy
@@ -637,8 +637,8 @@ dev_close (FpImageDevice *dev)
   GError *error = NULL;
 
   self->have_bg = FALSE;
-  memset (self->bg, 0, RAW_W * RAW_H * sizeof (float));
-  memset (self->raw, 0, RAW_LEN);
+  explicit_bzero (self->bg, RAW_W * RAW_H * sizeof (float));
+  explicit_bzero (self->raw, RAW_LEN);
 
   g_usb_device_release_interface (fpi_device_get_usb_device (FP_DEVICE (dev)),
                                   USB_INTERFACE, 0, &error);
@@ -685,7 +685,7 @@ act_run_state (FpiSsm *ssm, FpDevice *dev)
 
     case ACT_STORE:
       bg_accumulate (self);
-      memset (self->raw, 0, RAW_LEN);
+      explicit_bzero (self->raw, RAW_LEN);
       fpi_ssm_next_state (ssm);
       break;
 
@@ -821,7 +821,7 @@ cap_run_state (FpiSsm *ssm, FpDevice *dev)
     case CAP_BUILD:
       g_clear_object (&self->pending_img);
       self->pending_img = build_image (self);
-      memset (self->raw, 0, RAW_LEN);
+      explicit_bzero (self->raw, RAW_LEN);
       fpi_ssm_next_state (ssm);
       break;
 
@@ -1146,9 +1146,9 @@ fpi_device_ft9366_finalize (GObject *object)
   FpiDeviceFt9366 *self = FPI_DEVICE_FT9366 (object);
 
   /* ujjlenyomat-adat ne maradjon a felszabadított memóriában */
-  memset (self->raw, 0, RAW_LEN);
-  memset (self->bg, 0, RAW_W * RAW_H * sizeof (float));
-  memset (self->bg_frames, 0, BG_BYTES);
+  explicit_bzero (self->raw, RAW_LEN);
+  explicit_bzero (self->bg, RAW_W * RAW_H * sizeof (float));
+  explicit_bzero (self->bg_frames, BG_BYTES);
   g_clear_pointer (&self->raw, g_free);
   g_clear_pointer (&self->bg, g_free);
   g_clear_pointer (&self->bg_frames, g_free);

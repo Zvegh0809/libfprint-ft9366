@@ -92,7 +92,7 @@ img_free (Img *im)
 {
   if (im->d)
     {
-      memset (im->d, 0, (size_t) im->w * im->h * sizeof (float));
+      explicit_bzero (im->d, (size_t) im->w * im->h * sizeof (float));
       free (im->d);
     }
   im->d = NULL;
@@ -174,7 +174,7 @@ gauss_blur (const Img *src, Img *dst, double sigma)
             out[x] = s;
           }
       }
-    memset (pad, 0, (size_t) (src->w + 2 * r) * sizeof (float));
+    explicit_bzero (pad, (size_t) (src->w + 2 * r) * sizeof (float));
     free (pad);
   }
 
@@ -183,7 +183,7 @@ gauss_blur (const Img *src, Img *dst, double sigma)
     {
       float *out = dst->d + (size_t) y * dst->w;
 
-      memset (out, 0, (size_t) dst->w * sizeof (float));
+      explicit_bzero (out, (size_t) dst->w * sizeof (float));
       for (i = 0; i < ks; i++)
         {
           const float *row = tmp + (size_t) refl101 (y - r + i, src->h) * src->w;
@@ -193,7 +193,7 @@ gauss_blur (const Img *src, Img *dst, double sigma)
         }
     }
 
-  memset (tmp, 0, (size_t) src->w * src->h * sizeof (float));
+  explicit_bzero (tmp, (size_t) src->w * src->h * sizeof (float));
   free (tmp);
   free (k);
   return 1;
@@ -341,7 +341,7 @@ pyr_free (Pyr *p)
       img_free (&p->dog[i]);
   free (p->g);
   free (p->dog);
-  memset (p, 0, sizeof (*p));
+  explicit_bzero (p, sizeof (*p));
 }
 
 static int
@@ -351,7 +351,7 @@ pyr_build (const Img *input, Pyr *p)
   Img base = { 0 };
   int o, i, ok = 1;
 
-  memset (p, 0, sizeof (*p));
+  explicit_bzero (p, sizeof (*p));
 
   /* base: 2x upsampled, blurred to SIFT_SIGMA (assuming 0.5 blur in input) */
   if (!img_alloc (&base, input->w * 2, input->h * 2))
@@ -824,7 +824,7 @@ content_mask (const float *src, uint8_t *mask)
           s += tmp[refl101 (y + i, FTM_H) * FTM_W + x];
         mask[y * FTM_W + x] = s / (CONTENT_BOX * CONTENT_BOX) > CONTENT_THR;
       }
-  memset (tmp, 0, sizeof (tmp));
+  explicit_bzero (tmp, sizeof (tmp));
 }
 
 /* ------------------------------------------------------------------ */
@@ -855,7 +855,7 @@ prepare_image (FtmFeatures *f, const uint8_t *img, uint8_t *u8)
         u8[i] = (uint8_t) clampi ((int) ((f->e[i] + 3.0f) / 6.0f * 255.0f), 0, 255);
     }
   content_mask (sq, f->content);
-  memset (sq, 0, sizeof (sq));
+  explicit_bzero (sq, sizeof (sq));
 }
 
 FtmFeatures *
@@ -906,14 +906,14 @@ ftm_extract (const uint8_t *img)
 
   pyr_free (&pyr);
   free (kl.v);
-  memset (u8, 0, sizeof (u8));
+  explicit_bzero (u8, sizeof (u8));
   return f;
 
 fail:
   img_free (&up);
   pyr_free (&pyr);
   free (kl.v);
-  memset (u8, 0, sizeof (u8));
+  explicit_bzero (u8, sizeof (u8));
   ftm_free (f);
   return NULL;
 }
@@ -1037,15 +1037,15 @@ ftm_free (FtmFeatures *f)
     return;
   if (f->pt)
     {
-      memset (f->pt, 0, (size_t) (f->n ? f->n : 1) * sizeof (Pt));
+      explicit_bzero (f->pt, (size_t) (f->n ? f->n : 1) * sizeof (Pt));
       free (f->pt);
     }
   if (f->desc)
     {
-      memset (f->desc, 0, f->n ? (size_t) f->n * DESC_LEN : 1);
+      explicit_bzero (f->desc, f->n ? (size_t) f->n * DESC_LEN : 1);
       free (f->desc);
     }
-  memset (f, 0, sizeof (*f));
+  explicit_bzero (f, sizeof (*f));
   free (f);
 }
 
@@ -1155,7 +1155,7 @@ ransac_sim (const Pt *A, const Pt *B, int n, Sim *best, uint8_t *mask)
 
   if (!cur)
     return 0;
-  memset (mask, 0, n);
+  explicit_bzero (mask, n);
 
   for (it = 0; it < iters; it++)
     {
@@ -1319,8 +1319,8 @@ ftm_score (const FtmFeatures *probe, const FtmFeatures *tmpl)
         cnt++;
       }
 
-  memset (wa, 0, sizeof (wa));
-  memset (wsq, 0, sizeof (wsq));
+  explicit_bzero (wa, sizeof (wa));
+  explicit_bzero (wsq, sizeof (wsq));
 
   if (cnt < MIN_OVERLAP * NPIX)
     return 0.0;
