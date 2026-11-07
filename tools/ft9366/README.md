@@ -12,7 +12,7 @@ fingerprint sensor behind a **Realtek RTS5811** USB bridge
 
 | | |
 |---|---|
-| Laptop | ASUS Vivobook Pro 15 (M6500Q) |
+| Laptop | ASUS Vivobook Pro 15 (M6500QE) |
 | OS | CachyOS (Arch Linux), fprintd + PAM (`sudo`, screen unlock) |
 | libfprint base | 1.94.100 |
 
