@@ -17,7 +17,7 @@
 
 ```sh
 cd tools/ft9366
-makepkg -si                                   # builds and installs libfprint (see PKGBUILD)
+makepkg -si                                   # builds and installs libfprint-ft9366 (see PKGBUILD)
 
 sudo sh ft9366-setup-key.sh                   # key + fprintd drop-in
 # optionally, with Secure Boot enabled: sudo PCRS=7 sh ft9366-setup-key.sh

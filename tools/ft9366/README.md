@@ -47,13 +47,14 @@ have been measured.
 ```sh
 git clone -b ft9366 https://github.com/Zvegh0809/libfprint-ft9366 ~/libfprint
 cd ~/libfprint/tools/ft9366
-makepkg -si                       # replaces the libfprint package
+makepkg -si                       # installs libfprint-ft9366 in place of libfprint
 ```
 
-The package replaces your distribution's `libfprint` and has a higher
-version, so `pacman -Syu` will not bring back the official one. To get
-upstream changes, pull this branch and rebuild; to go back, reinstall the
-official package (`sudo pacman -S libfprint`).
+The package is called `libfprint-ft9366`; it provides and conflicts with
+`libfprint`, so pacman asks to remove the official package once, and fprintd
+keeps working. `pacman -Syu` will not swap it back. To get new driver
+changes, pull this branch and rebuild; to go back, run
+`sudo pacman -S libfprint`.
 
 ### Other distributions
 
@@ -115,7 +116,9 @@ The data tools save **real fingerprint images** (by default under
 
 ## Testing and reporting
 
-Please open an issue with:
+Please report problems with this driver **here, in this repository's
+issues**, not to upstream libfprint: the upstream maintainers do not ship or
+support it. Include:
 
 - laptop model and `lsusb | grep 2808`,
 - whether enrollment and verification work, roughly how often verification

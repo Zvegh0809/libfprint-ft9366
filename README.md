@@ -3,6 +3,8 @@
 > the FocalTech FT9366 sensor (USB `2808:a658`). See
 > [tools/ft9366/README.md](tools/ft9366/README.md). Everything else is
 > upstream libfprint: <https://gitlab.freedesktop.org/libfprint/libfprint>
+>
+> Please report problems with the ft9366 driver in this fork's issues, not upstream.
 
 <div align="center">
 

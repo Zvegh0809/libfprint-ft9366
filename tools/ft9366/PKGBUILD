@@ -6,16 +6,17 @@
 #
 # After changing the driver: commit, bump pkgrel, run makepkg -si again.
 
-pkgname=libfprint
+pkgname=libfprint-ft9366
 pkgver=1.94.100
-pkgrel=3
-pkgdesc="Fingerprint reader library with the FT9366 driver (AES-256-GCM template encryption)"
+pkgrel=1
+pkgdesc="libfprint with the unofficial FT9366 (2808:a658) driver and encrypted templates"
 arch=(x86_64)
-url="https://gitlab.freedesktop.org/libfprint/libfprint"
+url="https://github.com/Zvegh0809/libfprint-ft9366"
 license=(LGPL-2.1-or-later)
 depends=(cairo glib2 libgudev libgusb openssl pixman systemd-libs)
 makedepends=(git meson gobject-introspection)
-provides=(libfprint-2.so)
+provides=("libfprint=$pkgver" libfprint-2.so)
+conflicts=(libfprint)
 source=("libfprint::git+file://$HOME/libfprint#branch=ft9366")
 sha256sums=('SKIP')
 
