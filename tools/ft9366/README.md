@@ -50,12 +50,21 @@ cd ~/libfprint/tools/ft9366
 makepkg -si                       # replaces the libfprint package
 ```
 
+The package replaces your distribution's `libfprint` and has a higher
+version, so `pacman -Syu` will not bring back the official one. To get
+upstream changes, pull this branch and rebuild; to go back, reinstall the
+official package (`sudo pacman -S libfprint`).
+
 ### Other distributions
 
-Build with meson and install over the system libfprint (fprintd must load it):
+Build with meson and install over the system libfprint. `--prefix=/usr` is
+required, otherwise it lands in `/usr/local` and fprintd keeps loading the
+system library:
 
 ```sh
-meson setup build -Ddoc=false -Dgtk-examples=false
+git clone -b ft9366 https://github.com/Zvegh0809/libfprint-ft9366 ~/libfprint
+cd ~/libfprint
+meson setup build --prefix=/usr -Ddoc=false -Dgtk-examples=false
 ninja -C build
 sudo ninja -C build install
 ```
@@ -63,7 +72,7 @@ sudo ninja -C build install
 ### Key setup and enrollment
 
 ```sh
-sudo sh tools/ft9366/ft9366-setup-key.sh   # needs a TPM2; see the script header
+sudo sh ~/libfprint/tools/ft9366/ft9366-setup-key.sh   # needs a TPM2; see the script header
 fprintd-enroll
 fprintd-verify
 ```
