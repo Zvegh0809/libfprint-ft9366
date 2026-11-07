@@ -1,0 +1,35 @@
+# libfprint saját FT9366 driverrel (sablontitkosítással)
+# A ~/libfprint helyi git-repó ft9366 ágának COMMITOLT állapotából épít.
+#
+# Használat:
+#   mkdir -p ~/pkgbuild/libfprint-ft9366 && cp PKGBUILD ~/pkgbuild/libfprint-ft9366/
+#   cd ~/pkgbuild/libfprint-ft9366 && makepkg -si
+#
+# Új driverváltozat után: commitolj a ~/libfprint-ben, növeld a pkgrel-t, makepkg -si
+
+pkgname=libfprint
+pkgver=1.94.100
+pkgrel=2
+pkgdesc="Fingerprint reader library – saját FT9366 driverrel (AES-256-GCM sablontitkosítás)"
+arch=(x86_64)
+url="https://gitlab.freedesktop.org/libfprint/libfprint"
+license=(LGPL-2.1-or-later)
+depends=(cairo glib2 libgudev libgusb openssl pixman systemd-libs)
+makedepends=(git meson gobject-introspection)
+provides=(libfprint-2.so)
+source=("libfprint::git+file://$HOME/libfprint#branch=ft9366")
+sha256sums=('SKIP')
+
+build() {
+  # FT9366_DEVEL szándékosan NINCS megadva: éles buildben nincs képmentés
+  arch-meson libfprint build \
+    -D doc=false \
+    -D gtk-examples=false \
+    -D installed-tests=false \
+    -D drivers=default
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+}
