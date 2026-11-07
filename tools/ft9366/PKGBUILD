@@ -8,12 +8,12 @@
 
 pkgname=libfprint-ft9366
 pkgver=1.94.100
-pkgrel=1
+pkgrel=2
 pkgdesc="libfprint with the unofficial FT9366 (2808:a658) driver and encrypted templates"
 arch=(x86_64)
 url="https://github.com/Zvegh0809/libfprint-ft9366"
 license=(LGPL-2.1-or-later)
-depends=(cairo glib2 libgudev libgusb openssl pixman systemd-libs)
+depends=(glib2 libgudev libgusb openssl pixman)
 makedepends=(git meson gobject-introspection)
 provides=("libfprint=$pkgver" libfprint-2.so)
 conflicts=(libfprint)
@@ -21,6 +21,8 @@ source=("libfprint::git+file://$HOME/libfprint#branch=ft9366")
 sha256sums=('SKIP')
 
 build() {
+  # keep build paths out of the binary (glib assertions embed __FILE__)
+  export CFLAGS+=" -ffile-prefix-map=$srcdir=."
   # FT9366_DEVEL is deliberately not set: release builds cannot dump images
   arch-meson libfprint build \
     -D doc=false \

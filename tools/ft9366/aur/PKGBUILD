@@ -8,7 +8,7 @@ pkgdesc="libfprint with an unofficial driver for the FocalTech FT9366 (2808:a658
 arch=(x86_64)
 url="https://github.com/Zvegh0809/libfprint-ft9366"
 license=(LGPL-2.1-or-later)
-depends=(cairo glib2 libgudev libgusb openssl pixman systemd-libs)
+depends=(glib2 libgudev libgusb openssl pixman)
 makedepends=(git glib2-devel gobject-introspection meson python systemd)
 optdepends=('fprintd: D-Bus daemon and PAM integration'
             'tpm2-tss: seal the template key with the TPM (recommended)')
@@ -26,6 +26,8 @@ pkgver() {
 }
 
 build() {
+  # keep build paths out of the binary (glib assertions embed __FILE__)
+  export CFLAGS+=" -ffile-prefix-map=$srcdir=."
   # FT9366_DEVEL is deliberately not set: release builds cannot dump images
   arch-meson libfprint build \
     -D doc=false \
