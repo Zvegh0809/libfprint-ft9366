@@ -13,7 +13,7 @@ fingerprint sensor behind a **Realtek RTS5811** USB bridge
 | | |
 |---|---|
 | Laptop | ASUS Vivobook Pro 15 (M6500QE) |
-| OS | CachyOS (Arch Linux), fprintd + PAM (`sudo`, screen unlock) |
+| OS | CachyOS (Arch Linux), fprintd + PAM (`sudo`, polkit, screen unlock) |
 | libfprint base | 1.94.100 |
 
 If you have a device with the same USB ID, reports (working or not) are very
@@ -89,6 +89,59 @@ the key exists.
 
 The driver asks for 16 touches per finger. Move the finger slightly between
 touches so different areas get covered.
+
+### Fingerprint login (PAM)
+
+The driver does not touch your PAM configuration; enable `pam_fprintd` for
+each service where you want to use the fingerprint.
+
+> [!WARNING]
+> A broken PAM file can lock you out of `sudo`. Keep a root shell open
+> (`sudo -i`) in another terminal while editing, and test before closing it.
+
+The lines below keep the password first: type it as usual, or press
+**Enter** on an empty prompt to be asked for your fingerprint.
+
+```
+auth       sufficient   pam_unix.so try_first_pass likeauth nullok
+auth       sufficient   pam_fprintd.so
+```
+
+**sudo:** add the two lines at the top of the `auth` section in
+`/etc/pam.d/sudo`, before any `auth include ...` line.
+
+**Graphical authentication dialogs (polkit):** prompts such as KDE Plasma's
+"Authentication Required" dialog use the separate `polkit-1` PAM service, so
+enabling `sudo` alone does not enable them. Recent polkit versions ship this
+file in `/usr/lib/pam.d/`; copy it to `/etc/pam.d/`, which takes precedence
+and is not overwritten by package updates:
+
+```sh
+sudo cp /usr/lib/pam.d/polkit-1 /etc/pam.d/polkit-1
+sudoedit /etc/pam.d/polkit-1
+```
+
+Add the same two lines at the top, so it looks like this:
+
+```
+#%PAM-1.0
+
+auth       sufficient   pam_unix.so try_first_pass likeauth nullok
+auth       sufficient   pam_fprintd.so
+auth       include      system-auth
+account    include      system-auth
+password   include      system-auth
+session    include      system-auth
+```
+
+Test it with `pkexec true`. After polkit updates, occasionally compare your
+copy with the packaged one
+(`diff /usr/lib/pam.d/polkit-1 /etc/pam.d/polkit-1`).
+
+Prefer per-service files over editing `system-auth`, which would enable the
+fingerprint for every service that includes it (login, `su`, the display
+manager, …). See the [Arch Wiki: fprint](https://wiki.archlinux.org/title/Fprint)
+page for more details.
 
 ## Security model and limitations
 
