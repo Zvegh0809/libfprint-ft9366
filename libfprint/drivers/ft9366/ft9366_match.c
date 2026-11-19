@@ -50,6 +50,10 @@
 #define CONTENT_BOX       9
 #define CONTENT_THR       0.25
 #define MIN_OVERLAP       0.2
+/* Keypoints kept per image; also the limit ftm_deserialize() accepts.
+ * Must fit the 16-bit count of the serialised format. Real images give
+ * ~130-200, so the limit is only a safety net. */
+#define MAX_KP            4096
 
 #define NPIX              (FTM_W * FTM_H)
 
@@ -703,6 +707,17 @@ kp_cmp (const void *pa, const void *pb)
   return 0;
 }
 
+/* strongest response first, kp_cmp order among equals */
+static int
+kp_cmp_resp (const void *pa, const void *pb)
+{
+  const Kp *a = pa, *b = pb;
+
+  if (a->resp != b->resp)
+    return a->resp > b->resp ? -1 : 1;
+  return kp_cmp (pa, pb);
+}
+
 /* 4x4x8 gradient histogram descriptor (Lowe 2004, sec. 6) */
 static void
 describe (const Pyr *p, const Kp *kp, uint8_t out[DESC_LEN])
@@ -893,6 +908,15 @@ ftm_extract (const uint8_t *img)
       kl.n = i + 1;
     }
 
+  /* keep the strongest MAX_KP, so that every template can be stored and
+   * read back */
+  if (kl.n > MAX_KP)
+    {
+      qsort (kl.v, kl.n, sizeof (Kp), kp_cmp_resp);
+      kl.n = MAX_KP;
+      qsort (kl.v, kl.n, sizeof (Kp), kp_cmp);
+    }
+
   f->n = kl.n;
   f->pt = calloc (kl.n ? kl.n : 1, sizeof (Pt));
   f->desc = calloc (kl.n ? (size_t) kl.n * DESC_LEN : 1, 1);
@@ -937,7 +961,7 @@ ftm_coverage (const FtmFeatures *f)
 #define SER_VERSION   1
 #define SER_HDR       (1 + NPIX + 2)
 #define SER_PER_KP    (8 + DESC_LEN)
-#define SER_MAX_KP    4096
+#define SER_MAX_KP    MAX_KP
 
 size_t
 ftm_serialized_size (const FtmFeatures *f)
