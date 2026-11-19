@@ -4,3 +4,7 @@ pkg/
 libfprint/
 *.pkg.tar.*
 *.log
+
+# Python bytecode
+__pycache__/
+*.pyc
