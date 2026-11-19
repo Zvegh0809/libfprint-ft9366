@@ -309,18 +309,42 @@ fpi_image_device_report_print (FpImageDevice *self, FpPrint *print_in, GError *e
       gint i;
       GPtrArray *templates;
       FpPrint *result = NULL;
+      gboolean host_matcher = FP_IMAGE_DEVICE_GET_CLASS (self)->match_template != NULL;
+      GError *skipped_error = NULL;
+      guint n_skipped = 0;
 
       fpi_device_get_identify_data (device, &templates);
       for (i = 0; !error && i < templates->len; i++)
         {
           FpPrint *template = g_ptr_array_index (templates, i);
+          FpiMatchResult match;
 
-          if (fpi_image_device_match (self, template, print, &error) == FPI_MATCH_SUCCESS)
+          match = fpi_image_device_match (self, template, print, &error);
+          if (match == FPI_MATCH_SUCCESS)
             {
               result = template;
               break;
             }
+
+          /* With a driver matcher, a print that cannot be read (e.g. one
+           * enrolled with an older key or format) is skipped, so that the
+           * other prints can still match. Its error is reported only if no
+           * print could be compared at all. */
+          if (match == FPI_MATCH_ERROR && host_matcher && error &&
+              error->domain == FP_DEVICE_ERROR)
+            {
+              g_warning ("Skipping enrolled print %d: %s", i, error->message);
+              n_skipped++;
+              if (!skipped_error)
+                skipped_error = g_steal_pointer (&error);
+              else
+                g_clear_error (&error);
+            }
         }
+
+      if (!result && !error && n_skipped > 0 && n_skipped == templates->len)
+        error = g_steal_pointer (&skipped_error);
+      g_clear_error (&skipped_error);
 
       /* fpi_device_identify_report() expects a non-NBIS scanned print to be
        * equal to the matched one (device-stored prints). A host-matched RAW
