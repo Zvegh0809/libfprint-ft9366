@@ -5,12 +5,15 @@
 - Every template blob (image + SIFT keypoints + descriptors) is encrypted
   with AES-256-GCM before it is stored in the FpPrint, so fprintd only ever
   writes ciphertext to `/var/lib/fprint`. The GCM tag makes the driver reject
-  modified or swapped blobs.
+  modified blobs and blobs sealed with another key. A blob is not bound to a
+  user or finger, though (see below).
 - The key reaches fprintd as a systemd credential (`LoadCredentialEncrypted=`),
   sealed with TPM2 + the host secret: it cannot be opened on another machine
   or from a copied disk.
 - Without a key the device does not open (fail closed), so an unencrypted
-  template can never be created.
+  template can never be created. If the key becomes unavailable later,
+  enrolment and verification fail with an error instead of asking for
+  another touch or for re-enrolment.
 - The `FT9366_DUMP` image dump only exists in builds with `-DFT9366_DEVEL`.
 
 ## Installation
@@ -54,6 +57,11 @@ cd "$(mktemp -d)" && /tmp/test_crypt
 
 - On a running system, root (or an attacker who gets code into fprintd) can
   access both the key and the decrypted templates: this is protection at rest.
+- A blob is not bound to a user or finger: the authenticated data is only
+  the header and a fixed context string. Someone who can write
+  `/var/lib/fprint` (root) could move a blob between prints, and it would
+  still decrypt. Root can read the key anyway, so this adds no new attack,
+  but the encryption does not detect it.
 - The sensor's USB link is neither encrypted nor authenticated, and there is
   no liveness detection, so captured images can be replayed by someone with
   physical access.
