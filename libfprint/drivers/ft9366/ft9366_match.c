@@ -4,7 +4,7 @@
  * The SIFT part follows Lowe (IJCV 60(2):91-110, 2004) with the parameter
  * conventions of the widely used OpenCV implementation (3 layers per octave,
  * sigma 1.6, initial 2x upsampling, 4x4x8 descriptor), so that results can be
- * compared with the Python/OpenCV evaluation script (ft9366_evaluate.py).
+ * checked against OpenCV.
  * Written from the paper; no code was copied from OpenCV or VLFeat.
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
@@ -18,7 +18,7 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/* Parameters (identical to ft9366_evaluate.py)                         */
+/* Parameters                                                           */
 /* ------------------------------------------------------------------ */
 
 #define UPSCALE           3       /* cubic upscaling before SIFT        */

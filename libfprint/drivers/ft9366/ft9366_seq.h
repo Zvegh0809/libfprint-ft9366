@@ -1,6 +1,7 @@
 /*
- * FT9366 (2808:a658) parancssorozatok.
- * GENERATED FILE - from the Windows driver's USB traffic (usbmon), clean-room.
+ * FT9366 (2808:a658) command sequences, recorded from the Windows driver's
+ * USB traffic (usbmon), clean-room. tools/ft9366/ft9366_seq.json holds the
+ * same tables for the Python tools.
  * Fields: { length, { bytes }, reply length, delay_ms before the command }
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later

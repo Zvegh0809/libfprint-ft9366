@@ -51,7 +51,7 @@
 #define IMG_Y0            3
 #define IMG_W             (RAW_W - 2 * IMG_X0)
 #define IMG_H             (RAW_H - IMG_Y0)
-/* high-pass window; ridge period is ~6 px */
+/* high-pass window, about one ridge period (~8.7 px) */
 #define HP_BOX            9
 /* On activation BG_FRAMES empty frames are averaged into a background.
  * A finger lowers a frame's mean by ~200-450, so only frames within BG_TOL
@@ -515,7 +515,6 @@ task_done_common (FpiDeviceFt9366 *self, GError *error)
 
   if (error && !self->deactivating)
     {
-      /* e.g. CAP_POST failed after CAP_BUILD: the image is never reported */
       clear_pending_img (self);
       fpi_image_device_session_error (dev, error);
       return;
@@ -628,10 +627,8 @@ dev_open (FpImageDevice *dev)
   GError *error = NULL;
   FpiSsm *ssm;
 
-  /* Fail closed: refuse to work without the template key. The umockdev
-   * tests (emulation mode) run without one; there, as everywhere, sealing
-   * a template still fails without a key, so no plaintext template can be
-   * produced either way. */
+  /* Fail closed without the template key. The umockdev tests have no key;
+   * sealing fails there too, so no plaintext template can result. */
   if (!fpi_device_emulation_mode_enabled (FP_DEVICE (dev)) &&
       !ft9366_crypt_check_key (&error))
     {
@@ -1107,8 +1104,7 @@ features_from_variant (GVariant *v, GError **error)
   plain = ft9366_crypt_open (data, len, &plain_len, &local_error);
   if (!plain)
     {
-      /* A missing key is not a problem of this template: re-enrolling
-       * would not help, so it is not reported as invalid data. */
+      /* only a bad blob is invalid data; a missing key is a general error */
       if (g_error_matches (local_error, FT9366_CRYPT_ERROR, FT9366_CRYPT_ERROR_FORMAT) ||
           g_error_matches (local_error, FT9366_CRYPT_ERROR, FT9366_CRYPT_ERROR_AUTH))
         g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
@@ -1140,9 +1136,8 @@ ft9366_match_template (FpImageDevice *dev, GVariant *enrolled,
   double best = 0;
   guint i = 0, scored = 0;
 
-  /* The probe was made by this driver moments ago: if it cannot be read,
-   * no enrolled print is at fault, so never report it as invalid data
-   * (which would make libfprint skip the enrolled print). */
+  /* An unreadable probe is not the enrolled print's fault: report it as a
+   * general error, so libfprint does not skip that print. */
   pf = features_from_variant (probe, &probe_error);
   if (!pf)
     {
@@ -1171,8 +1166,8 @@ ft9366_match_template (FpImageDevice *dev, GVariant *enrolled,
         }
       if (!tf)
         {
-          /* Skip it: one unreadable template must not hide the others.
-           * Skipping can only lower the chance of a match. */
+          /* one unreadable template must not hide the others; skipping can
+           * only lower the chance of a match */
           g_prefix_error (&local_error, "Enrolled template %u: ", i - 1);
           g_message ("%s", local_error->message);
           if (!first_error)

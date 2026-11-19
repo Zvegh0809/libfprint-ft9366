@@ -4,7 +4,7 @@
  * The host-side matcher's template contains the enhanced 60x77 fingerprint
  * image (NCC scoring runs on it), so a template is effectively the
  * fingerprint itself. Templates therefore only leave the driver encrypted;
- * plaintext exists in memory only while matching.
+ * plaintext exists in memory only while a template is extracted or matched.
  *
  * Blob format (v1):
  *   "FT9E" | 0x01 | nonce[12] | ciphertext | tag[16]
@@ -41,8 +41,9 @@ typedef enum {
   FT9366_CRYPT_ERROR_INTERNAL,   /* OpenSSL error, OOM             */
 } Ft9366CryptError;
 
-/* Called on open: without a usable key the device does not open, so no
- * unencrypted template can ever be produced. */
+/* Checks that the key can be loaded (called on open, so a missing key shows
+ * up early). Sealing needs the key too, so no unencrypted template can ever
+ * be produced. */
 gboolean ft9366_crypt_check_key (GError **error);
 
 /* Returns a new blob of len + FT9366_CRYPT_OVERHEAD bytes (free with
