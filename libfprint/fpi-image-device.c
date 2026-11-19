@@ -333,7 +333,7 @@ fpi_image_device_report_print (FpImageDevice *self, FpPrint *print_in, GError *e
           if (match == FPI_MATCH_ERROR && host_matcher && error &&
               error->domain == FP_DEVICE_ERROR)
             {
-              g_warning ("Skipping enrolled print %d: %s", i, error->message);
+              g_message ("Skipping enrolled print %d: %s", i, error->message);
               n_skipped++;
               if (!skipped_error)
                 skipped_error = g_steal_pointer (&error);

@@ -1147,7 +1147,7 @@ ft9366_match_template (FpImageDevice *dev, GVariant *enrolled,
           /* Skip it: one unreadable template must not hide the others.
            * Skipping can only lower the chance of a match. */
           g_prefix_error (&local_error, "Enrolled template %u: ", i - 1);
-          fp_warn ("%s", local_error->message);
+          g_message ("%s", local_error->message);
           if (!first_error)
             first_error = g_steal_pointer (&local_error);
           continue;
