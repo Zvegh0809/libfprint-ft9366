@@ -330,8 +330,8 @@ fpi_image_device_report_print (FpImageDevice *self, FpPrint *print_in, GError *e
            * enrolled with an older key or format) is skipped, so that the
            * other prints can still match. Its error is reported only if no
            * print could be compared at all. */
-          if (match == FPI_MATCH_ERROR && host_matcher && error &&
-              error->domain == FP_DEVICE_ERROR)
+          if (match == FPI_MATCH_ERROR && host_matcher &&
+              g_error_matches (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID))
             {
               g_message ("Skipping enrolled print %d: %s", i, error->message);
               n_skipped++;
@@ -494,6 +494,16 @@ fpi_image_device_template_extracted (GObject *source_object, GAsyncResult *res, 
     {
       if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
         {
+          fp_image_device_maybe_complete_action (self, g_steal_pointer (&error));
+          fpi_image_device_deactivate (self, TRUE);
+          return;
+        }
+
+      /* Not something another touch can fix (e.g. the template key is
+       * unavailable): fail the action instead of asking for a retry. */
+      if (error->domain == FP_DEVICE_ERROR)
+        {
+          g_message ("Template extraction failed: %s", error->message);
           fp_image_device_maybe_complete_action (self, g_steal_pointer (&error));
           fpi_image_device_deactivate (self, TRUE);
           return;
