@@ -1281,6 +1281,9 @@ fpi_device_ft9366_class_init (FpiDeviceFt9366Class *klass)
   dev_class->id_table = id_table;
   dev_class->scan_type = FP_SCAN_TYPE_PRESS;
   dev_class->nr_enroll_stages = 16;   /* same as the Windows driver */
+  /* capacitive press sensor without heating: may run continuously, like
+   * the Windows driver (the default model stops it after ~3 minutes) */
+  dev_class->temp_hot_seconds = -1;
 
   img_class->img_open = dev_open;
   img_class->img_close = dev_close;
