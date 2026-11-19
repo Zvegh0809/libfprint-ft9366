@@ -664,7 +664,14 @@ fpi_image_device_image_captured (FpImageDevice *self, FpImage *image)
 
       g_task_set_source_tag (task, fpi_image_device_image_captured);
       g_task_set_task_data (task, g_object_ref (self), g_object_unref);
-      g_task_run_in_thread (task, fpi_image_device_extract_thread);
+      /* A plain capture only needs the image: skip the template (nothing
+       * is matched, and nothing should be sealed with the driver's key).
+       * GTask still runs the callback from the main loop, as for the
+       * threaded case, so the state changes below happen first. */
+      if (action == FPI_DEVICE_ACTION_CAPTURE)
+        g_task_return_pointer (task, NULL, NULL);
+      else
+        g_task_run_in_thread (task, fpi_image_device_extract_thread);
       g_object_unref (task);
     }
   else
