@@ -820,6 +820,8 @@ fpi_image_device_activate_complete (FpImageDevice *self, GError *error)
   if (error)
     {
       g_debug ("Image device activation failed");
+      /* back to INACTIVE, so that the next action can activate again */
+      fp_image_device_change_state (self, FPI_IMAGE_DEVICE_STATE_INACTIVE);
       fpi_device_action_error (FP_DEVICE (self), error);
       return;
     }
