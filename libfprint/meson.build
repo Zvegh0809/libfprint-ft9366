@@ -91,6 +91,7 @@ driver_sources = {
     'ft9366' : files(
         'drivers/ft9366/ft9366.c',
         'drivers/ft9366/ft9366_match.c',
+        'drivers/ft9366/ft9366_image.c',
         'drivers/ft9366/ft9366_crypt.c',
     ),
     'upekts' : files(

@@ -35,6 +35,7 @@
 #include "ft9366_seq.h"
 #include "ft9366_match.h"
 #include "ft9366_crypt.h"
+#include "ft9366_image.h"
 
 #define EP_OUT            (0x01 | FPI_USB_ENDPOINT_OUT)
 #define EP_IN             (0x02 | FPI_USB_ENDPOINT_IN)
@@ -42,22 +43,15 @@
 #define CMD_TIMEOUT       2000
 #define REPLY_BUF         512
 
-#define RAW_W             64
-#define RAW_H             80
+/* frame size and crop: see ft9366_image.h */
+#define RAW_W             FT9366_RAW_W
+#define RAW_H             FT9366_RAW_H
 #define RAW_LEN           (RAW_W * RAW_H * 2)
-/* Crop: columns 0/63 are empty, the top 3 rows are noisy/saturated.
- * Leaves 60 columns (2..61) x 77 rows (3..79). */
-#define IMG_X0            2
-#define IMG_Y0            3
-#define IMG_W             (RAW_W - 2 * IMG_X0)
-#define IMG_H             (RAW_H - IMG_Y0)
-/* high-pass window, about one ridge period (~8.7 px) */
-#define HP_BOX            9
-/* On activation BG_FRAMES empty frames are averaged into a background.
- * A finger lowers a frame's mean by ~200-450, so only frames within BG_TOL
- * of the brightest one are used. */
+#define IMG_W             FT9366_IMG_W
+#define IMG_H             FT9366_IMG_H
+/* On activation BG_FRAMES empty frames are averaged into a background
+ * (ft9366_bg_average() skips frames disturbed by a finger). */
 #define BG_FRAMES         5
-#define BG_TOL            60
 /* observed empty-sensor background mean: 2370-2570 */
 #define BG_SANE_MIN       2300
 /* A finger resting on the sensor during calibration is detected by the
@@ -296,14 +290,6 @@ run_seq_n (FpiSsm *parent, FpDevice *dev, const Ft9366Cmd *table, gsize n)
 /* Image processing                                                     */
 /* ------------------------------------------------------------------ */
 
-static int
-cmp_float (const void *a, const void *b)
-{
-  float x = *(const float *) a, y = *(const float *) b;
-
-  return (x > y) - (x < y);
-}
-
 static void
 bg_reset (FpiDeviceFt9366 *self)
 {
@@ -357,30 +343,9 @@ static void
 bg_finalize (FpiDeviceFt9366 *self)
 {
   guint32 max_mean = bg_max_mean (self);
-  gboolean use[BG_FRAMES] = { FALSE };
-  guint used = 0, k;
-  gsize i;
+  guint used;
 
-  for (k = 0; k < self->bg_count; k++)
-    if (self->bg_means[k] + BG_TOL >= max_mean)
-      {
-        use[k] = TRUE;
-        used++;
-      }
-    else
-      {
-        fp_dbg ("background frame %u rejected (finger on sensor?)", k + 1);
-      }
-
-  for (i = 0; i < RAW_W * RAW_H; i++)
-    {
-      guint32 s = 0;
-
-      for (k = 0; k < self->bg_count; k++)
-        if (use[k])
-          s += self->bg_frames[(gsize) k * RAW_W * RAW_H + i];
-      self->bg[i] = (float) s / used;
-    }
+  used = ft9366_bg_average (self->bg_frames, self->bg_means, self->bg_count, self->bg);
 
   if (max_mean < BG_SANE_MIN)
     fp_warn ("background mean %u is low - finger on the sensor during calibration?",
@@ -392,85 +357,17 @@ bg_finalize (FpiDeviceFt9366 *self)
   self->have_bg = TRUE;
 }
 
-/* clamped pixel access */
-#define AT(buf, w, h, x, y) \
-  (buf)[CLAMP ((gint) (y), 0, (h) - 1) * (w) + CLAMP ((gint) (x), 0, (w) - 1)]
-
 static FpImage *
 build_image (FpiDeviceFt9366 *self)
 {
-  float *a = self->work_a, *b = self->work_b;
-  double *integ = self->work_integ;
-  const gsize n = IMG_W * IMG_H;
-  const gint r = HP_BOX / 2;
-  FpImage *img;
-  float lo, hi;
-  gint x, y;
+  FpImage *img = fp_image_new (IMG_W, IMG_H);
 
-  /* 1. background subtraction + crop */
-  for (y = 0; y < IMG_H; y++)
-    for (x = 0; x < IMG_W; x++)
-      {
-        gsize ri = (y + IMG_Y0) * RAW_W + x + IMG_X0;
-        float v = (self->raw[2 * ri] << 8) | self->raw[2 * ri + 1];
-
-        if (self->have_bg)
-          v -= self->bg[ri];
-        a[y * IMG_W + x] = v;
-      }
-
-  /* 2. 3x3 Gaussian blur */
-  for (y = 0; y < IMG_H; y++)
-    for (x = 0; x < IMG_W; x++)
-      {
-        float s =
-          1 * AT (a, IMG_W, IMG_H, x - 1, y - 1) + 2 * AT (a, IMG_W, IMG_H, x, y - 1) + 1 * AT (a, IMG_W, IMG_H, x + 1, y - 1) +
-          2 * AT (a, IMG_W, IMG_H, x - 1, y)     + 4 * AT (a, IMG_W, IMG_H, x, y)     + 2 * AT (a, IMG_W, IMG_H, x + 1, y) +
-          1 * AT (a, IMG_W, IMG_H, x - 1, y + 1) + 2 * AT (a, IMG_W, IMG_H, x, y + 1) + 1 * AT (a, IMG_W, IMG_H, x + 1, y + 1);
-        b[y * IMG_W + x] = s / 16.0f;
-      }
-
-  /* 3. high-pass: subtract the HP_BOX box mean (integral image; edge
-   *    windows only count in-image pixels) */
-  for (y = 0; y <= IMG_H; y++)
-    integ[y * (IMG_W + 1)] = 0;
-  for (x = 0; x <= IMG_W; x++)
-    integ[x] = 0;
-  for (y = 1; y <= IMG_H; y++)
-    for (x = 1; x <= IMG_W; x++)
-      integ[y * (IMG_W + 1) + x] = b[(y - 1) * IMG_W + (x - 1)]
-                                   + integ[(y - 1) * (IMG_W + 1) + x]
-                                   + integ[y * (IMG_W + 1) + x - 1]
-                                   - integ[(y - 1) * (IMG_W + 1) + x - 1];
-  for (y = 0; y < IMG_H; y++)
-    for (x = 0; x < IMG_W; x++)
-      {
-        gint x0 = MAX (x - r, 0), x1 = MIN (x + r + 1, IMG_W);
-        gint y0 = MAX (y - r, 0), y1 = MIN (y + r + 1, IMG_H);
-        double s = integ[y1 * (IMG_W + 1) + x1] - integ[y0 * (IMG_W + 1) + x1]
-                   - integ[y1 * (IMG_W + 1) + x0] + integ[y0 * (IMG_W + 1) + x0];
-
-        a[y * IMG_W + x] = b[y * IMG_W + x] - (float) (s / ((x1 - x0) * (y1 - y0)));
-      }
-
-  /* 4. stretch the 2nd-98th percentile to 0..255 */
-  memcpy (b, a, n * sizeof (float));
-  qsort (b, n, sizeof (float), cmp_float);
-  lo = b[n / 50];
-  hi = b[n - 1 - n / 50];
-  if (hi <= lo)
-    hi = lo + 1;
-  img = fp_image_new (IMG_W, IMG_H);
-  for (gsize i = 0; i < n; i++)
-    img->data[i] = CLAMP ((gint) ((a[i] - lo) * 255.0f / (hi - lo)), 0, 255);
+  ft9366_build_image (self->raw, self->have_bg ? self->bg : NULL, img->data,
+                      self->work_a, self->work_b, self->work_integ);
 
   /* Contact lowers the reading, so ridges come out dark, as libfprint
    * expects: no FPI_IMAGE_COLORS_INVERTED. */
   img->flags = 0;
-
-  explicit_bzero (a, n * sizeof (float));
-  explicit_bzero (b, n * sizeof (float));
-  explicit_bzero (integ, (IMG_W + 1) * (IMG_H + 1) * sizeof (double));
 
   /* DEVELOPMENT ONLY: dump the image handed to libfprint. Compiled in only
    * with -Dc_args=-DFT9366_DEVEL, so release builds cannot write images to

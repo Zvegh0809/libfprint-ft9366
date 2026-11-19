@@ -4,19 +4,20 @@
  *   ftm_eval <data-dir> [score-matrix-out.bin] [image-dump-dir]
  *
  * <data-dir>/<finger>/<session>/{bg_*.pgm,img_*.pgm}: 16-bit raw frames as
- * written by ft9366_collect.py. Each image is preprocessed exactly like
- * build_image() in the ft9366 driver, then all ordered pairs are scored.
+ * written by ft9366_collect.py. Images are preprocessed with the driver's
+ * own code (ft9366_image.c), then all ordered pairs are scored.
  * FRR/FAR use a rotating split: for each start position, N consecutive
  * images of a finger are enrolled and the rest are probes.
  *
  * Build (from the repository root); add e.g. -DFTM_MIN_OVERLAP=0.3 or
  * -DFTM_MIN_INLIERS=5 to measure other matcher limits:
  *   D=libfprint/drivers/ft9366
- *   gcc -O2 -I$D tools/ft9366/ftm_eval.c $D/ft9366_match.c -lm -o ftm_eval
+ *   gcc -O2 -I$D tools/ft9366/ftm_eval.c $D/ft9366_image.c $D/ft9366_match.c -lm -o ftm_eval
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
 
+#include "ft9366_image.h"
 #include "ft9366_match.h"
 
 #include <dirent.h>
@@ -27,20 +28,13 @@
 #include <string.h>
 #include <time.h>
 
-#define RAW_W  64
-#define RAW_H  80
-#define IMG_X0 2
-#define IMG_Y0 3
-#define IMG_W  (RAW_W - 2 * IMG_X0)
-#define IMG_H  (RAW_H - IMG_Y0)
-#define HP_BOX 9
+#define RAW_W  FT9366_RAW_W
+#define RAW_H  FT9366_RAW_H
 #define MAXIMG 512
+#define MAXBG  16
 
-#define CLAMP(v, lo, hi) ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define AT(buf, w, h, x, y) \
-  (buf)[CLAMP ((int) (y), 0, (h) - 1) * (w) + CLAMP ((int) (x), 0, (w) - 1)]
 
 /* snprintf for paths: stop instead of silently truncating */
 static void
@@ -60,9 +54,8 @@ path_fmt (char *buf, size_t size, const char *fmt, ...)
 }
 
 static int
-read_raw (const char *path, float *out)
+read_raw (const char *path, uint8_t *buf, uint16_t *words)
 {
-  unsigned char buf[RAW_W * RAW_H * 2];
   FILE *f = fopen (path, "rb");
   char hdr[32];
   int i, w, h, mx;
@@ -76,73 +69,16 @@ read_raw (const char *path, float *out)
     }
   fgetc (f);
   (void) hdr;
-  if (fread (buf, 1, sizeof (buf), f) != sizeof (buf))
+  if (fread (buf, 1, RAW_W * RAW_H * 2, f) != RAW_W * RAW_H * 2)
     {
       fclose (f);
       return 0;
     }
   fclose (f);
-  for (i = 0; i < RAW_W * RAW_H; i++)
-    out[i] = (float) ((buf[2 * i] << 8) | buf[2 * i + 1]);
+  if (words)
+    for (i = 0; i < RAW_W * RAW_H; i++)
+      words[i] = (uint16_t) ((buf[2 * i] << 8) | buf[2 * i + 1]);
   return 1;
-}
-
-static int
-cmp_float (const void *a, const void *b)
-{
-  float x = *(const float *) a, y = *(const float *) b;
-  return (x > y) - (x < y);
-}
-
-/* copy of build_image() from drivers/ft9366/ft9366.c */
-static void
-build_image (const float *raw, const float *bg, unsigned char *small)
-{
-  static float a[IMG_W * IMG_H], b[IMG_W * IMG_H];
-  static double integ[(IMG_W + 1) * (IMG_H + 1)];
-  const int n = IMG_W * IMG_H, r = HP_BOX / 2;
-  float lo, hi;
-  int x, y, i;
-
-  for (y = 0; y < IMG_H; y++)
-    for (x = 0; x < IMG_W; x++)
-      {
-        int ri = (y + IMG_Y0) * RAW_W + x + IMG_X0;
-        a[y * IMG_W + x] = raw[ri] - bg[ri];
-      }
-  for (y = 0; y < IMG_H; y++)
-    for (x = 0; x < IMG_W; x++)
-      {
-        float s =
-          1 * AT (a, IMG_W, IMG_H, x - 1, y - 1) + 2 * AT (a, IMG_W, IMG_H, x, y - 1) + 1 * AT (a, IMG_W, IMG_H, x + 1, y - 1) +
-          2 * AT (a, IMG_W, IMG_H, x - 1, y)     + 4 * AT (a, IMG_W, IMG_H, x, y)     + 2 * AT (a, IMG_W, IMG_H, x + 1, y) +
-          1 * AT (a, IMG_W, IMG_H, x - 1, y + 1) + 2 * AT (a, IMG_W, IMG_H, x, y + 1) + 1 * AT (a, IMG_W, IMG_H, x + 1, y + 1);
-        b[y * IMG_W + x] = s / 16.0f;
-      }
-  memset (integ, 0, sizeof (integ));
-  for (y = 1; y <= IMG_H; y++)
-    for (x = 1; x <= IMG_W; x++)
-      integ[y * (IMG_W + 1) + x] = b[(y - 1) * IMG_W + (x - 1)]
-                                   + integ[(y - 1) * (IMG_W + 1) + x]
-                                   + integ[y * (IMG_W + 1) + x - 1]
-                                   - integ[(y - 1) * (IMG_W + 1) + x - 1];
-  for (y = 0; y < IMG_H; y++)
-    for (x = 0; x < IMG_W; x++)
-      {
-        int x0 = MAX (x - r, 0), x1 = MIN (x + r + 1, IMG_W);
-        int y0 = MAX (y - r, 0), y1 = MIN (y + r + 1, IMG_H);
-        double s = integ[y1 * (IMG_W + 1) + x1] - integ[y0 * (IMG_W + 1) + x1]
-                   - integ[y1 * (IMG_W + 1) + x0] + integ[y0 * (IMG_W + 1) + x0];
-        a[y * IMG_W + x] = b[y * IMG_W + x] - (float) (s / ((x1 - x0) * (y1 - y0)));
-      }
-  memcpy (b, a, sizeof (a));
-  qsort (b, n, sizeof (float), cmp_float);
-  lo = b[n / 50];
-  hi = b[n - 1 - n / 50];
-  if (hi <= lo)
-    hi = lo + 1;
-  for (i = 0; i < n; i++)
-    small[i] = (unsigned char) CLAMP ((int) ((a[i] - lo) * 255.0f / (hi - lo)), 0, 255);
 }
 
 static int
@@ -208,28 +144,43 @@ main (int argc, char **argv)
       ns = list_dir (path, NULL, sess, 64);
       for (s = 0; s < ns; s++)
         {
-          float bg[RAW_W * RAW_H] = { 0 }, raw[RAW_W * RAW_H];
+          static uint16_t bgf[MAXBG][RAW_W * RAW_H];
+          static float work_a[FT9366_IMG_W * FT9366_IMG_H], work_b[FT9366_IMG_W * FT9366_IMG_H];
+          static double work_integ[(FT9366_IMG_W + 1) * (FT9366_IMG_H + 1)];
+          uint32_t bgm[MAXBG];
+          float bg[RAW_W * RAW_H];
+          uint8_t raw[RAW_W * RAW_H * 2];
           char sdir[1024];
           int nb, ni, k, p;
 
           path_fmt (sdir, sizeof sdir, "%s/%s/%s", data, fingers[f], sess[s]);
           nb = list_dir (sdir, "bg_", files, 256);
+          if (nb > MAXBG || nb < 1)
+            {
+              fprintf (stderr, "%s: expected 1..%d background frames, found %d\n", sdir, MAXBG, nb);
+              return 1;
+            }
           for (k = 0; k < nb; k++)
             {
+              uint64_t sum = 0;
+
               path_fmt (path, sizeof path, "%s/%s", sdir, files[k]);
-              if (!read_raw (path, raw))
+              if (!read_raw (path, raw, bgf[k]))
                 return 1;
               for (p = 0; p < RAW_W * RAW_H; p++)
-                bg[p] += raw[p] / nb;
+                sum += bgf[k][p];
+              bgm[k] = (uint32_t) (sum / (RAW_W * RAW_H));
               free (files[k]);
             }
+          /* the driver's background, including its frame selection */
+          ft9366_bg_average (&bgf[0][0], bgm, (unsigned) nb, bg);
           ni = list_dir (sdir, "img_", files, 256);
           for (k = 0; k < ni && n < MAXIMG; k++)
             {
               path_fmt (path, sizeof path, "%s/%s", sdir, files[k]);
-              if (!read_raw (path, raw))
+              if (!read_raw (path, raw, NULL))
                 return 1;
-              build_image (raw, bg, imgs[n]);
+              ft9366_build_image (raw, bg, imgs[n], work_a, work_b, work_integ);
               if (dump)
                 {
                   FILE *o;
