@@ -21,6 +21,7 @@
 
 #include <dirent.h>
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +41,23 @@
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define AT(buf, w, h, x, y) \
   (buf)[CLAMP ((int) (y), 0, (h) - 1) * (w) + CLAMP ((int) (x), 0, (w) - 1)]
+
+/* snprintf for paths: stop instead of silently truncating */
+static void
+path_fmt (char *buf, size_t size, const char *fmt, ...)
+{
+  va_list ap;
+  int r;
+
+  va_start (ap, fmt);
+  r = vsnprintf (buf, size, fmt, ap);
+  va_end (ap);
+  if (r < 0 || (size_t) r >= size)
+    {
+      fprintf (stderr, "path too long: %s...\n", buf);
+      exit (1);
+    }
+}
 
 static int
 read_raw (const char *path, float *out)
@@ -186,7 +204,7 @@ main (int argc, char **argv)
   for (f = 0; f < nf; f++)
     {
       int ns, cnt = 0;
-      snprintf (path, sizeof path, "%s/%s", data, fingers[f]);
+      path_fmt (path, sizeof path, "%s/%s", data, fingers[f]);
       ns = list_dir (path, NULL, sess, 64);
       for (s = 0; s < ns; s++)
         {
@@ -194,11 +212,11 @@ main (int argc, char **argv)
           char sdir[1024];
           int nb, ni, k, p;
 
-          snprintf (sdir, sizeof sdir, "%s/%s/%s", data, fingers[f], sess[s]);
+          path_fmt (sdir, sizeof sdir, "%s/%s/%s", data, fingers[f], sess[s]);
           nb = list_dir (sdir, "bg_", files, 256);
           for (k = 0; k < nb; k++)
             {
-              snprintf (path, sizeof path, "%s/%s", sdir, files[k]);
+              path_fmt (path, sizeof path, "%s/%s", sdir, files[k]);
               if (!read_raw (path, raw))
                 return 1;
               for (p = 0; p < RAW_W * RAW_H; p++)
@@ -208,15 +226,20 @@ main (int argc, char **argv)
           ni = list_dir (sdir, "img_", files, 256);
           for (k = 0; k < ni && n < MAXIMG; k++)
             {
-              snprintf (path, sizeof path, "%s/%s", sdir, files[k]);
+              path_fmt (path, sizeof path, "%s/%s", sdir, files[k]);
               if (!read_raw (path, raw))
                 return 1;
               build_image (raw, bg, imgs[n]);
               if (dump)
                 {
                   FILE *o;
-                  snprintf (path, sizeof path, "%s/%03d_%s.pgm", dump, n, fingers[f]);
+                  path_fmt (path, sizeof path, "%s/%03d_%s.pgm", dump, n, fingers[f]);
                   o = fopen (path, "wb");
+                  if (!o)
+                    {
+                      perror (path);
+                      return 1;
+                    }
                   fprintf (o, "P5 %d %d 255\n", FTM_W, FTM_H);
                   fwrite (imgs[n], 1, FTM_W * FTM_H, o);
                   fclose (o);
@@ -232,6 +255,11 @@ main (int argc, char **argv)
         per = cnt;
     }
   printf ("%d images, %d fingers\n", n, nf);
+  if (n < 2 || nf < 1)
+    {
+      fprintf (stderr, "no usable images under %s\n", data);
+      return 1;
+    }
 
   t0 = now ();
   for (i = 0; i < n; i++)
