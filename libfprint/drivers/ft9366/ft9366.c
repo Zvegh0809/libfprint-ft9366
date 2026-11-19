@@ -21,7 +21,7 @@
  * (ft9366_match.c: SIFT + RANSAC + correlation over the aligned overlap) is
  * plugged in through the FpImageDeviceClass extract/match hooks.
  *
- * Status: EXPERIMENTAL. See the TODO comments.
+ * Status: EXPERIMENTAL.
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
@@ -76,7 +76,8 @@
 #define CHIP_ID           0x9362
 #define POLL_FINGER_MS    32
 #define POLL_LIFT_MS      100
-/* All four 0x80b8 values above this => no finger. TODO: tune */
+/* All four 0x80b8 values above this => no finger. Measured over 276 lift
+ * probes: <= 0x124 with a finger, >= 0x20a without. */
 #define FINGER_OFF_LEVEL  0x01c0
 
 /* On the development set (4 fingers x 20 images, one person) the best
@@ -121,6 +122,7 @@ struct _FpiDeviceFt9366
   guint            bg_retries;
   guint32          bg_ref_mean;   /* last accepted calibration, 0 = none */
   gboolean         have_bg;
+  GError          *act_error;     /* activation aborted: reported after sleep */
 
   /* task SSM results, reported from the done callback */
   gboolean         finger_on;
@@ -190,20 +192,23 @@ image_cb (FpiUsbTransfer *transfer, FpDevice *dev,
 
   if (error)
     {
+      explicit_bzero (self->raw, RAW_LEN);
       fpi_ssm_mark_failed (transfer->ssm, error);
       return;
     }
 
-  memcpy (self->raw, transfer->buffer, RAW_LEN);
   fpi_ssm_next_state (transfer->ssm);
 }
 
 static void
 recv_image (FpiSsm *ssm, FpDevice *dev)
 {
+  FpiDeviceFt9366 *self = FPI_DEVICE_FT9366 (dev);
   FpiUsbTransfer *transfer = fpi_usb_transfer_new (dev);
 
-  fpi_usb_transfer_fill_bulk (transfer, EP_IN, RAW_LEN);
+  /* straight into self->raw: no copy of the frame in a buffer that
+   * libfprint would free without wiping */
+  fpi_usb_transfer_fill_bulk_full (transfer, EP_IN, self->raw, RAW_LEN, NULL);
   transfer->ssm = ssm;
   transfer->short_is_error = TRUE;
   fpi_usb_transfer_submit (transfer, CMD_TIMEOUT, NULL, image_cb, NULL);
@@ -459,7 +464,8 @@ build_image (FpiDeviceFt9366 *self)
   for (gsize i = 0; i < n; i++)
     img->data[i] = CLAMP ((gint) ((a[i] - lo) * 255.0f / (hi - lo)), 0, 255);
 
-  /* TODO: verify polarity (FPI_IMAGE_COLORS_INVERTED?) */
+  /* Contact lowers the reading, so ridges come out dark, as libfprint
+   * expects: no FPI_IMAGE_COLORS_INVERTED. */
   img->flags = 0;
 
   explicit_bzero (a, n * sizeof (float));
@@ -677,6 +683,8 @@ enum act_states {
   ACT_STORE,
   ACT_POST,
   ACT_LOOP,
+  ACT_ABORT_SLEEP,
+  ACT_ABORT,
   ACT_NUM_STATES,
 };
 
@@ -714,7 +722,16 @@ act_run_state (FpiSsm *ssm, FpDevice *dev)
       break;
 
     case ACT_LOOP:
-      if (self->bg_count < BG_FRAMES)
+      /* libfprint ignores a cancellation while the device is activating,
+       * so check for it after every frame */
+      if (fpi_device_action_is_cancelled (dev))
+        {
+          bg_reset (self);
+          self->act_error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                                                 "Operation was cancelled");
+          fpi_ssm_jump_to_state (ssm, ACT_ABORT_SLEEP);
+        }
+      else if (self->bg_count < BG_FRAMES)
         {
           fpi_ssm_jump_to_state (ssm, ACT_PREP);
         }
@@ -729,15 +746,24 @@ act_run_state (FpiSsm *ssm, FpDevice *dev)
       else if (bg_max_mean (self) < BG_VALID_MIN)
         {
           bg_reset (self);
-          fpi_ssm_mark_failed (ssm,
-                               fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
-                                                         "Finger on the sensor during calibration; lift it and try again"));
+          self->act_error = fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
+                                                      "Finger on the sensor during calibration; lift it and try again");
+          fpi_ssm_jump_to_state (ssm, ACT_ABORT_SLEEP);
         }
       else
         {
           bg_finalize (self);
           fpi_ssm_mark_completed (ssm);
         }
+      break;
+
+    case ACT_ABORT_SLEEP:
+      /* put the sensor back to sleep: close does not */
+      run_seq (ssm, dev, ft9366_seq_sleep);
+      break;
+
+    case ACT_ABORT:
+      fpi_ssm_mark_failed (ssm, g_steal_pointer (&self->act_error));
       break;
 
     default:
@@ -748,6 +774,14 @@ act_run_state (FpiSsm *ssm, FpDevice *dev)
 static void
 act_done (FpiSsm *ssm, FpDevice *dev, GError *error)
 {
+  FpiDeviceFt9366 *self = FPI_DEVICE_FT9366 (dev);
+
+  /* if the sleep sequence itself failed, report why activation stopped */
+  if (self->act_error)
+    {
+      g_clear_error (&error);
+      error = g_steal_pointer (&self->act_error);
+    }
   fpi_image_device_activate_complete (FP_IMAGE_DEVICE (dev), error);
 }
 
@@ -1228,6 +1262,7 @@ fpi_device_ft9366_finalize (GObject *object)
   g_clear_pointer (&self->work_b, g_free);
   g_clear_pointer (&self->work_integ, g_free);
   clear_pending_img (self);
+  g_clear_error (&self->act_error);
 
   G_OBJECT_CLASS (fpi_device_ft9366_parent_class)->finalize (object);
 }
