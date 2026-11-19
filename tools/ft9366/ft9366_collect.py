@@ -115,6 +115,18 @@ def save_pgm16(path, raw):
         f.write(raw)                         # PGM16 is big-endian, like the sensor
 
 
+def make_dirs(path):
+    """os.makedirs() that returns the directories it created, top first."""
+    missing = []
+    p = os.path.abspath(path)
+    while not os.path.isdir(p):
+        missing.append(p)
+        p = os.path.dirname(p)
+    for d in reversed(missing):
+        os.mkdir(d, 0o700)
+    return list(reversed(missing))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--finger", required=True, help="e.g. right_index")
@@ -123,15 +135,17 @@ def main():
     ap.add_argument("--seq", default=os.path.join(HERE, "ft9366_seq.json"))
     a = ap.parse_args()
 
+    # fingerprint images: readable by the user only, whatever sudo's umask is
+    os.umask(0o077)
     user = os.environ.get("SUDO_USER") or pwd.getpwuid(os.getuid()).pw_name
     pw = pwd.getpwnam(user)
     base = a.out or os.path.join(pw.pw_dir, "ft9366", "data")
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = os.path.join(base, a.finger, stamp)
-    os.makedirs(outdir, exist_ok=True)
 
     seq = json.load(open(a.seq))
-    s = Sensor(seq)
+    s = Sensor(seq)                 # exits here if there is no sensor
+    created = make_dirs(outdir)
     meta = dict(finger=a.finger, started=stamp, width=W, height=H, bits=12,
                 bg=[], images=[])
     try:
@@ -177,12 +191,11 @@ def main():
         meta["count"] = len(meta["images"])
         with open(os.path.join(outdir, "meta.json"), "w") as f:
             json.dump(meta, f, indent=1)
-        # hand the files back to the invoking user instead of root
-        for root, dirs, files in os.walk(os.path.join(base, a.finger)):
-            for x in dirs + files:
-                os.chown(os.path.join(root, x), pw.pw_uid, pw.pw_gid)
-        os.chown(os.path.join(base, a.finger), pw.pw_uid, pw.pw_gid)
-        os.chown(base, pw.pw_uid, pw.pw_gid)
+        # hand everything this run created back to the invoking user
+        for d in created:
+            os.chown(d, pw.pw_uid, pw.pw_gid, follow_symlinks=False)
+        for x in os.listdir(outdir):
+            os.chown(os.path.join(outdir, x), pw.pw_uid, pw.pw_gid, follow_symlinks=False)
         print(f"Saved: {outdir}  ({meta['count']} images)")
 
 
