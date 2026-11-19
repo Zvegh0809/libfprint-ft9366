@@ -44,15 +44,21 @@
 #define RANSAC_THR        2.0     /* px, in FTM_W x FTM_H coordinates   */
 #define RANSAC_CONF       0.99
 #define RANSAC_MAX_ITERS  2000
-/* MIN_INLIERS and MIN_OVERLAP can be overridden (-D) for ftm_eval sweeps */
-#ifndef MIN_INLIERS
+/* MIN_INLIERS and MIN_OVERLAP can be overridden for ftm_eval sweeps with
+ * -DFTM_MIN_INLIERS=... / -DFTM_MIN_OVERLAP=... (prefixed, so that a stray
+ * global define cannot change the matcher by accident) */
+#ifdef FTM_MIN_INLIERS
+#define MIN_INLIERS       FTM_MIN_INLIERS
+#else
 #define MIN_INLIERS       3
 #endif
 #define SCALE_MIN         0.9
 #define SCALE_MAX         1.1
 #define CONTENT_BOX       9
 #define CONTENT_THR       0.25
-#ifndef MIN_OVERLAP
+#ifdef FTM_MIN_OVERLAP
+#define MIN_OVERLAP       FTM_MIN_OVERLAP
+#else
 #define MIN_OVERLAP       0.2
 #endif
 /* Keypoints kept per image; also the limit ftm_deserialize() accepts.
