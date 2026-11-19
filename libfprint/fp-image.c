@@ -60,6 +60,15 @@ static void
 fp_image_finalize (GObject *object)
 {
   FpImage *self = (FpImage *) object;
+  gsize len = (gsize) self->width * self->height;
+
+  /* Fingerprint data: do not leave it behind in freed memory. Drivers
+   * only ever shrink width/height after fp_image_new() (e.g. vfs301), so
+   * width * height never exceeds the allocation. */
+  if (self->data)
+    explicit_bzero (self->data, len);
+  if (self->binarized)
+    explicit_bzero (self->binarized, len);
 
   g_clear_pointer (&self->data, g_free);
   g_clear_pointer (&self->binarized, g_free);
