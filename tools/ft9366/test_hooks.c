@@ -228,6 +228,22 @@ main (int argc, char **argv)
       }
       g_assert (r == FPI_MATCH_ERROR);
       g_assert_error (err, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID);
+      g_clear_error (&err);
+
+      /* an unreadable template is skipped, the readable ones still match */
+      {
+        g_autoptr(GVariant) good = extract (pix[0]);
+        g_autoptr(GVariant) probe = extract (pix[0]);
+        g_autoptr(GVariant) mixed = NULL;
+
+        g_variant_builder_init (&b, G_VARIANT_TYPE ("av"));
+        g_variant_builder_add (&b, "v", g_variant_new_bytestring ("junk"));
+        g_variant_builder_add (&b, "v", good);
+        mixed = g_variant_ref_sink (g_variant_builder_end (&b));
+        r = ft9366_match_template (NULL, mixed, probe, &err);
+        g_assert_no_error (err);
+        g_assert (r == FPI_MATCH_SUCCESS);
+      }
       printf ("error paths OK\n");
     }
 

@@ -1120,12 +1120,13 @@ static FpiMatchResult
 ft9366_match_template (FpImageDevice *dev, GVariant *enrolled,
                        GVariant *probe, GError **error)
 {
+  g_autoptr(GError) first_error = NULL;
   FpiMatchResult res = FPI_MATCH_FAIL;
   FtmFeatures *pf;
   GVariantIter iter;
   GVariant *child;
   double best = 0;
-  guint i = 0;
+  guint i = 0, scored = 0;
 
   pf = features_from_variant (probe, error);
   if (!pf)
@@ -1135,28 +1136,41 @@ ft9366_match_template (FpImageDevice *dev, GVariant *enrolled,
   while (res == FPI_MATCH_FAIL && (child = g_variant_iter_next_value (&iter)))
     {
       g_autoptr(GVariant) inner = g_variant_get_variant (child);
-      FtmFeatures *tf = features_from_variant (inner, error);
+      g_autoptr(GError) local_error = NULL;
+      FtmFeatures *tf = features_from_variant (inner, &local_error);
       double s;
 
       g_variant_unref (child);
+      i++;
       if (!tf)
         {
-          g_prefix_error (error, "Enrolled template %u: ", i);
-          res = FPI_MATCH_ERROR;
-          break;
+          /* Skip it: one unreadable template must not hide the others.
+           * Skipping can only lower the chance of a match. */
+          g_prefix_error (&local_error, "Enrolled template %u: ", i - 1);
+          fp_warn ("%s", local_error->message);
+          if (!first_error)
+            first_error = g_steal_pointer (&local_error);
+          continue;
         }
 
       s = ftm_score (pf, tf);
       ftm_free (tf);
+      scored++;
       best = MAX (best, s);
       if (s >= MATCH_THRESHOLD)
         res = FPI_MATCH_SUCCESS;
-      i++;
     }
 
-  fp_dbg ("match: best score %.3f over %u templates (threshold %.2f)",
-          best, i, MATCH_THRESHOLD);
+  fp_dbg ("match: best score %.3f over %u/%u templates (threshold %.2f)",
+          best, scored, i, MATCH_THRESHOLD);
   ftm_free (pf);
+
+  /* not a single template could be read: report why */
+  if (scored == 0 && first_error)
+    {
+      g_propagate_error (error, g_steal_pointer (&first_error));
+      return FPI_MATCH_ERROR;
+    }
   return res;
 }
 
