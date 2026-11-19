@@ -18,19 +18,16 @@
 
 ## Installation
 
+Install the package as described in [README.md](README.md#installation), then:
+
 ```sh
-cd tools/ft9366
-makepkg -si                                   # builds and installs libfprint-ft9366 (see PKGBUILD)
-
-sudo sh ft9366-setup-key.sh                   # key + fprintd drop-in
-# optionally, with Secure Boot enabled: sudo PCRS=7 sh ft9366-setup-key.sh
-
-sudo fprintd-delete "$USER"                   # remove old unencrypted templates
+sudo ft9366-setup-key                         # key + fprintd drop-in
+# optionally, with Secure Boot enabled: sudo PCRS=7 ft9366-setup-key
 fprintd-enroll
 ```
 
-Check: files under `/var/lib/fprint/<user>/ft9366/` must not contain `P5`/readable
-image data, and `fprintd-verify` must work.
+Check: `sudo grep -rL FT9E /var/lib/fprint/"$USER"/ft9366` prints nothing
+(every stored template is a sealed blob), and `fprintd-verify` works.
 
 ## Development (examples/enroll, img-capture)
 

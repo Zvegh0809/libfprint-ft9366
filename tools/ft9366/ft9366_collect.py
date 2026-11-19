@@ -120,7 +120,7 @@ def main():
     ap.add_argument("--finger", required=True, help="e.g. right_index")
     ap.add_argument("--count", type=int, default=20)
     ap.add_argument("--out", default=None)
-    ap.add_argument("--seq", default=os.path.join(HERE, "ft9366_seq2.json"))
+    ap.add_argument("--seq", default=os.path.join(HERE, "ft9366_seq.json"))
     a = ap.parse_args()
 
     user = os.environ.get("SUDO_USER") or pwd.getpwuid(os.getuid()).pw_name

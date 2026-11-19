@@ -59,8 +59,9 @@ the clone and `makepkg -si` again; to go back, run `sudo pacman -S libfprint`.
 The same PKGBUILD will be published in the AUR as `libfprint-ft9366-git` once
 AUR account registration reopens.
 
-For driver development, `tools/ft9366/PKGBUILD` builds `libfprint-ft9366` from
-the committed state of a local clone at `~/libfprint` instead.
+For driver development, point `source=` in `aur/PKGBUILD` at a local clone
+(`git+file:///path/to/libfprint#branch=ft9366`); makepkg then builds its
+committed state.
 
 ### Other distributions
 
@@ -169,13 +170,16 @@ Please report security problems privately, as described in
 
 | File | Purpose |
 |---|---|
-| `ft9366_poc.py` | Minimal proof of concept: read one image with pyusb |
 | `ft9366_collect.py` | Capture raw images per finger for matcher development |
-| `ft9366_evaluate.py` | Evaluate the matching method (Python/OpenCV reference) |
-| `ftm_eval.c` | Evaluate the C matcher on the same data |
+| `ftm_eval.c` | FRR/FAR of the matcher on the collected images (build line in the file header) |
 | `test_crypt.c`, `test_hooks.c` | Tests for template encryption and the driver hooks |
-| `ft9366_seq*.json` | Command sequences recorded from the Windows driver |
+| `ft9366_seq.json` | Command sequences recorded from the Windows driver (used by `ft9366_collect.py`) |
 | `ft9366-setup-key.sh` | Create the template key and the fprintd drop-in |
+| `aur/` | The `libfprint-ft9366-git` PKGBUILD |
+
+`tests/ft9366/` holds the umockdev test (`meson test -C build ft9366`): a
+real recording of the protocol in which the one finger frame was replaced
+with a generated stripe pattern, so no fingerprint is published.
 
 The data tools save **real fingerprint images** (by default under
 `~/ft9366/data`). Never commit them, and delete them when you are done.
@@ -190,7 +194,9 @@ support it. Include:
 - whether enrollment and verification work, roughly how often verification
   fails,
 - the fprintd log of a failing attempt (`journalctl -u fprintd`), with
-  `G_MESSAGES_DEBUG=all` if possible. The logs contain no image data.
+  `G_MESSAGES_DEBUG=all` if possible. These logs contain no image data;
+  do not set `FP_DEBUG_TRANSFER`, which dumps the raw USB traffic, images
+  included.
 
 ## Clean-room statement
 

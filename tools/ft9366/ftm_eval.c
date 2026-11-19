@@ -5,9 +5,14 @@
  *
  * <data-dir>/<finger>/<session>/{bg_*.pgm,img_*.pgm}: 16-bit raw frames as
  * written by ft9366_collect.py. Each image is preprocessed exactly like
- * build_image() in the ft9366 driver, then all ordered pairs are scored and
- * FRR/FAR are reported with the same rotating enrol/probe split as
- * ft9366_evaluate.py.
+ * build_image() in the ft9366 driver, then all ordered pairs are scored.
+ * FRR/FAR use a rotating split: for each start position, N consecutive
+ * images of a finger are enrolled and the rest are probes.
+ *
+ * Build (from the repository root); add e.g. -DFTM_MIN_OVERLAP=0.3 or
+ * -DFTM_MIN_INLIERS=5 to measure other matcher limits:
+ *   D=libfprint/drivers/ft9366
+ *   gcc -O2 -I$D tools/ft9366/ftm_eval.c $D/ft9366_match.c -lm -o ftm_eval
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
