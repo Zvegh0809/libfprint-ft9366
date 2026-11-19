@@ -1103,8 +1103,15 @@ features_from_variant (GVariant *v, GError **error)
   plain = ft9366_crypt_open (data, len, &plain_len, &local_error);
   if (!plain)
     {
-      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
-                   "%s; please re-enroll this finger", local_error->message);
+      /* A missing key is not a problem of this template: re-enrolling
+       * would not help, so it is not reported as invalid data. */
+      if (g_error_matches (local_error, FT9366_CRYPT_ERROR, FT9366_CRYPT_ERROR_FORMAT) ||
+          g_error_matches (local_error, FT9366_CRYPT_ERROR, FT9366_CRYPT_ERROR_AUTH))
+        g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+                     "%s", local_error->message);
+      else
+        g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                     "%s", local_error->message);
       return NULL;
     }
 
@@ -1121,6 +1128,7 @@ ft9366_match_template (FpImageDevice *dev, GVariant *enrolled,
                        GVariant *probe, GError **error)
 {
   g_autoptr(GError) first_error = NULL;
+  g_autoptr(GError) probe_error = NULL;
   FpiMatchResult res = FPI_MATCH_FAIL;
   FtmFeatures *pf;
   GVariantIter iter;
@@ -1128,9 +1136,16 @@ ft9366_match_template (FpImageDevice *dev, GVariant *enrolled,
   double best = 0;
   guint i = 0, scored = 0;
 
-  pf = features_from_variant (probe, error);
+  /* The probe was made by this driver moments ago: if it cannot be read,
+   * no enrolled print is at fault, so never report it as invalid data
+   * (which would make libfprint skip the enrolled print). */
+  pf = features_from_variant (probe, &probe_error);
   if (!pf)
-    return FPI_MATCH_ERROR;
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "Cannot read the scanned template: %s", probe_error->message);
+      return FPI_MATCH_ERROR;
+    }
 
   g_variant_iter_init (&iter, enrolled);
   while (res == FPI_MATCH_FAIL && (child = g_variant_iter_next_value (&iter)))
@@ -1142,6 +1157,14 @@ ft9366_match_template (FpImageDevice *dev, GVariant *enrolled,
 
       g_variant_unref (child);
       i++;
+      if (!tf && !g_error_matches (local_error, FP_DEVICE_ERROR,
+                                   FP_DEVICE_ERROR_DATA_INVALID))
+        {
+          /* e.g. the key is unavailable: affects every template */
+          g_propagate_error (error, g_steal_pointer (&local_error));
+          res = FPI_MATCH_ERROR;
+          break;
+        }
       if (!tf)
         {
           /* Skip it: one unreadable template must not hide the others.
@@ -1166,9 +1189,10 @@ ft9366_match_template (FpImageDevice *dev, GVariant *enrolled,
   ftm_free (pf);
 
   /* not a single template could be read: report why */
-  if (scored == 0 && first_error)
+  if (res == FPI_MATCH_FAIL && scored == 0 && first_error)
     {
-      g_propagate_error (error, g_steal_pointer (&first_error));
+      g_propagate_prefixed_error (error, g_steal_pointer (&first_error),
+                                  "Please re-enroll this finger. ");
       return FPI_MATCH_ERROR;
     }
   return res;

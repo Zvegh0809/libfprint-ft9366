@@ -214,9 +214,10 @@ main (int argc, char **argv)
       g_assert_error (err, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL);
       g_clear_error (&err);
 
+      /* an unreadable probe is never blamed on the enrolled print */
       r = ft9366_match_template (NULL, enrolled[0], junk, &err);
       g_assert (r == FPI_MATCH_ERROR);
-      g_assert_error (err, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID);
+      g_assert_error (err, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL);
       g_clear_error (&err);
 
       g_variant_builder_init (&b, G_VARIANT_TYPE ("av"));
@@ -243,6 +244,26 @@ main (int argc, char **argv)
         r = ft9366_match_template (NULL, mixed, probe, &err);
         g_assert_no_error (err);
         g_assert (r == FPI_MATCH_SUCCESS);
+      }
+
+      /* a missing key is a real error: no retry, no "re-enroll" */
+      {
+        g_autoptr(GVariant) probe = extract (pix[0]);
+        g_autofree char *key = g_strdup (g_getenv ("FT9366_KEY_FILE"));
+
+        g_unsetenv ("FT9366_KEY_FILE");
+        img.width = FTM_W;
+        img.data = pix[0];
+        g_assert_null (ft9366_extract_template (NULL, &img, &err));
+        g_assert_error (err, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL);
+        g_clear_error (&err);
+
+        r = ft9366_match_template (NULL, enrolled[0], probe, &err);
+        g_assert (r == FPI_MATCH_ERROR);
+        g_assert_error (err, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL);
+        g_assert_null (strstr (err->message, "re-enroll"));
+        g_clear_error (&err);
+        g_setenv ("FT9366_KEY_FILE", key, TRUE);
       }
       printf ("error paths OK\n");
     }
