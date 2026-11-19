@@ -44,12 +44,17 @@
 #define RANSAC_THR        2.0     /* px, in FTM_W x FTM_H coordinates   */
 #define RANSAC_CONF       0.99
 #define RANSAC_MAX_ITERS  2000
+/* MIN_INLIERS and MIN_OVERLAP can be overridden (-D) for ftm_eval sweeps */
+#ifndef MIN_INLIERS
 #define MIN_INLIERS       3
+#endif
 #define SCALE_MIN         0.9
 #define SCALE_MAX         1.1
 #define CONTENT_BOX       9
 #define CONTENT_THR       0.25
+#ifndef MIN_OVERLAP
 #define MIN_OVERLAP       0.2
+#endif
 /* Keypoints kept per image; also the limit ftm_deserialize() accepts.
  * Must fit the 16-bit count of the serialised format. Real images give
  * ~130-200, so the limit is only a safety net. */
