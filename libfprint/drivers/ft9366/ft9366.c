@@ -628,8 +628,12 @@ dev_open (FpImageDevice *dev)
   GError *error = NULL;
   FpiSsm *ssm;
 
-  /* Fail closed: refuse to work without the template key */
-  if (!ft9366_crypt_check_key (&error))
+  /* Fail closed: refuse to work without the template key. The umockdev
+   * tests (emulation mode) run without one; there, as everywhere, sealing
+   * a template still fails without a key, so no plaintext template can be
+   * produced either way. */
+  if (!fpi_device_emulation_mode_enabled (FP_DEVICE (dev)) &&
+      !ft9366_crypt_check_key (&error))
     {
       fpi_image_device_open_complete (dev,
                                       fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
