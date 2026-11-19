@@ -64,6 +64,7 @@ drivers_tests = {
     'focaltech_moc-6553': {},
     'mafpmoc': {},
     'secugen': {},
+    'ft9366': {},
 }
 
 if get_option('introspection')
