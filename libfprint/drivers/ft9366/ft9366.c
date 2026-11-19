@@ -493,6 +493,19 @@ build_image (FpiDeviceFt9366 *self)
 /* Shared task completion                                               */
 /* ------------------------------------------------------------------ */
 
+/* Drop a captured image that was not handed to libfprint. Nothing else
+ * holds a reference to it, so its pixels are wiped first. */
+static void
+clear_pending_img (FpiDeviceFt9366 *self)
+{
+  FpImage *img = self->pending_img;
+
+  if (!img)
+    return;
+  explicit_bzero (img->data, (gsize) img->width * img->height);
+  g_clear_object (&self->pending_img);
+}
+
 static void
 task_done_common (FpiDeviceFt9366 *self, GError *error)
 {
@@ -502,6 +515,8 @@ task_done_common (FpiDeviceFt9366 *self, GError *error)
 
   if (error && !self->deactivating)
     {
+      /* e.g. CAP_POST failed after CAP_BUILD: the image is never reported */
+      clear_pending_img (self);
       fpi_image_device_session_error (dev, error);
       return;
     }
@@ -509,7 +524,7 @@ task_done_common (FpiDeviceFt9366 *self, GError *error)
 
   if (self->deactivating)
     {
-      g_clear_object (&self->pending_img);
+      clear_pending_img (self);
       start_deactivate (self);
       return;
     }
@@ -744,6 +759,7 @@ dev_activate (FpImageDevice *dev)
   self->deactivating = FALSE;
   self->finger_on = self->finger_off = FALSE;
   self->bg_retries = 0;
+  clear_pending_img (self);
   bg_reset (self);
 
   ssm = fpi_ssm_new (FP_DEVICE (dev), act_run_state, ACT_NUM_STATES);
@@ -837,7 +853,7 @@ cap_run_state (FpiSsm *ssm, FpDevice *dev)
       break;
 
     case CAP_BUILD:
-      g_clear_object (&self->pending_img);
+      clear_pending_img (self);
       self->pending_img = build_image (self);
       explicit_bzero (self->raw, RAW_LEN);
       fpi_ssm_next_state (ssm);
@@ -1174,7 +1190,7 @@ fpi_device_ft9366_finalize (GObject *object)
   g_clear_pointer (&self->work_a, g_free);
   g_clear_pointer (&self->work_b, g_free);
   g_clear_pointer (&self->work_integ, g_free);
-  g_clear_object (&self->pending_img);
+  clear_pending_img (self);
 
   G_OBJECT_CLASS (fpi_device_ft9366_parent_class)->finalize (object);
 }
